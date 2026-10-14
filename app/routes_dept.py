@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from flask import (
     Blueprint, abort, current_app, flash, redirect, render_template,
@@ -16,7 +17,7 @@ from reports import generate_excel, generate_word_report
 from app import db
 from app.decorators import department_required
 from app.models import AnalysisResult, AuditLog, Department, Drone, MsnConflict, Upload
-from app.storage import allowed_log_file, archive_upload
+from app.storage import allowed_log_file, archive_upload, remove_with_retry
 
 dept_bp = Blueprint("dept", __name__)
 
@@ -122,7 +123,11 @@ def upload():
         return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 400
 
     filename = secure_filename(file.filename)
-    tmp_path = os.path.join(current_app.config["UPLOAD_TMP"], f"{os.getpid()}_{filename}")
+    # uuid4, not pid: a retried/resubmitted upload of the same filename must
+    # never collide on the same temp path -- on Windows in particular, a
+    # collision here can leave the previous attempt's file locked (by AV/
+    # indexer scanning) right when the next attempt tries to write it.
+    tmp_path = os.path.join(current_app.config["UPLOAD_TMP"], f"{uuid4().hex}_{filename}")
     file.save(tmp_path)
 
     # Resolve (or register) the drone this MSN belongs to, before touching
@@ -142,7 +147,7 @@ def upload():
             f"MSN {msn} already belongs to department {drone.department_id}",
         )
         db.session.commit()
-        os.remove(tmp_path)
+        remove_with_retry(tmp_path)
         flash(
             f"MSN '{msn}' is already registered to another department. "
             "This upload was not processed -- an administrator has been "
@@ -177,8 +182,7 @@ def upload():
         upload_row.status = "failed"
         upload_row.error_message = str(exc)
         db.session.commit()
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        remove_with_retry(tmp_path)
         flash(f"Processing failed: {exc}", "error")
         return redirect(url_for("dept.dashboard"))
 
