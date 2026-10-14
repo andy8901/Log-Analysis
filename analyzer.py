@@ -642,6 +642,18 @@ def process_log(file_path, drone_model=None):
     # mavutil keeps the log file open for the lifetime of this object; close
     # it explicitly so the caller can safely delete the uploaded file right
     # after (on Windows, deleting a still-open file raises PermissionError).
+    #
+    # For .bin dataflash logs, pymavlink's DFReader_binary memory-maps the
+    # file (self.data_map) for fast reading, but its own close() only closes
+    # the underlying file handle -- it never unmaps data_map. On Windows, a
+    # live memory mapping keeps the file locked at the OS level regardless
+    # of the file handle being closed, so without this the caller's later
+    # move/delete of the uploaded file fails with "being used by another
+    # process" until data_map happens to get garbage-collected (unpredictable,
+    # since DFReader instances tend to hold internal reference cycles).
+    data_map = getattr(log, "data_map", None)
+    if data_map is not None:
+        data_map.close()
     log.close()
 
     # =====================================================
