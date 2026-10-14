@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Login — Neosky Drone Diagnostic Platform{% endblock %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:60px auto;">
+    <h2 style="text-align:center;">Sign in</h2>
+    <form method="POST">
+        <div class="input-group">
+            <label>Username</label>
+            <input type="text" name="username" required autofocus>
+        </div>
+        <div class="input-group">
+            <label>Password</label>
+            <input type="password" name="password" required>
+        </div>
+        <br>
+        <center>
+            <button class="btn" type="submit">Log in</button>
+        </center>
+    </form>
+</div>
+{% endblock %}

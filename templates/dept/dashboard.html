@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ department.name }} Dashboard{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">{{ department.name }} Dashboard</h1>
+
+    <div class="summary-grid">
+        <div class="metric-card"><h4>Registered Drones</h4><h2>{{ summary.total_drones }}</h2></div>
+        <div class="metric-card"><h4>Total Logs Uploaded</h4><h2>{{ summary.total_logs }}</h2></div>
+        <div class="metric-card"><h4>Analyzed</h4><h2>{{ summary.completed }}</h2></div>
+        <div class="metric-card"><h4>Pending</h4><h2>{{ summary.pending }}</h2></div>
+        <div class="metric-card"><h4>Failed</h4><h2>{{ summary.failed }}</h2></div>
+        <div class="metric-card" style="background:#991b1b;"><h4>Critical</h4><h2>{{ summary.critical }}</h2></div>
+    </div>
+
+    {% if not current_user.is_admin %}
+    <p><a class="btn" href="{{ url_for('dept.upload') }}">+ Upload New Log</a></p>
+    {% endif %}
+
+    <form method="GET" class="filters">
+        <input type="hidden" name="department_id" value="{{ department.id }}">
+        <div class="input-group">
+            <label>MSN</label>
+            <input type="text" name="msn" value="{{ filters.msn }}">
+        </div>
+        <div class="input-group">
+            <label>Model</label>
+            <select name="model">
+                <option value="">All</option>
+                {% for m in model_choices %}
+                <option value="{{ m }}" {{ 'selected' if filters.model == m }}>{{ m }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="input-group">
+            <label>Status</label>
+            <select name="status">
+                <option value="">All</option>
+                <option value="completed" {{ 'selected' if filters.status == 'completed' }}>Completed</option>
+                <option value="processing" {{ 'selected' if filters.status == 'processing' }}>Processing</option>
+                <option value="failed" {{ 'selected' if filters.status == 'failed' }}>Failed</option>
+            </select>
+        </div>
+        <button class="btn secondary" type="submit">Filter</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Uploaded</th>
+                <th>MSN</th>
+                <th>Model</th>
+                <th>Filename</th>
+                <th>Flight Date</th>
+                <th>Status</th>
+                <th>Result</th>
+                <th>Uploaded By</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for u in uploads %}
+            <tr>
+                <td>{{ u.uploaded_at.strftime('%Y-%m-%d %H:%M') if u.uploaded_at else '' }}</td>
+                <td>{{ u.drone.msn if u.drone else u.msn_entered }}</td>
+                <td>{{ u.drone_model }}</td>
+                <td>{{ u.original_filename }}</td>
+                <td>{{ u.flight_date }}</td>
+                <td><span class="badge badge-{{ u.status }}">{{ u.status }}</span></td>
+                <td>
+                    {% if u.analysis %}
+                    <span class="badge badge-{{ u.analysis.report_status }}">{{ u.analysis.report_status }}</span>
+                    ({{ u.analysis.alert_count }} alerts)
+                    {% else %}&mdash;{% endif %}
+                </td>
+                <td>{{ u.user.full_name }}</td>
+                <td>
+                    {% if u.analysis %}
+                    <a class="btn" href="{{ url_for('dept.view_report', upload_id=u.id) }}">View</a>
+                    {% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="9" style="text-align:center;color:#64748b;">No uploads yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

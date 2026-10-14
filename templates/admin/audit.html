@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Audit Log{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Audit Log</h1>
+
+    <table>
+        <thead>
+            <tr><th>When</th><th>Actor</th><th>Action</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+        {% for e in entries %}
+            <tr>
+                <td>{{ e.created_at.strftime('%Y-%m-%d %H:%M:%S') if e.created_at else '' }}</td>
+                <td>{{ e.actor.username if e.actor else 'system' }}</td>
+                <td>{{ e.action }}</td>
+                <td>{{ e.details }}</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="4" style="text-align:center;color:#64748b;">No audit entries yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

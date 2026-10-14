@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Upload Log{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Upload Flight Log</h1>
+    <h3 style="text-align:center;color:#64748b;">{{ current_user.department.name }}</h3>
+
+    <form method="POST" enctype="multipart/form-data">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;">
+
+            <div class="input-group">
+                <label>Drone Model</label>
+                <select name="drone">
+                    {% for m in model_choices %}
+                    <option value="{{ m }}">{{ m }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label>MSN Number</label>
+                <input type="text" name="msn" required>
+            </div>
+
+            <div class="input-group">
+                <label>Flight / Incident Date</label>
+                <input type="date" name="date" required>
+            </div>
+
+            <div class="input-group">
+                <label>Reported By</label>
+                <input type="text" name="reported_by" value="{{ current_user.full_name }}" required>
+            </div>
+
+            <div class="input-group">
+                <label>Upload Log (.bin / .log / .tlog)</label>
+                <input type="file" name="log_file" accept=".bin,.log,.tlog" required>
+            </div>
+
+        </div>
+
+        <br>
+        <center>
+            <button class="btn" type="submit">Run Diagnostic</button>
+        </center>
+    </form>
+
+    <p style="color:#64748b;font-size:0.9em;margin-top:20px;">
+        If the MSN you enter is new, a drone record is created automatically
+        under your department. If it already exists under a <em>different</em>
+        department, the upload is rejected and flagged for an administrator
+        to resolve.
+    </p>
+</div>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Admin Overview{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Organization-Wide Overview</h1>
+
+    <div class="summary-grid">
+        <div class="metric-card"><h4>Departments</h4><h2>{{ totals.departments }}</h2></div>
+        <div class="metric-card"><h4>Users</h4><h2>{{ totals.users }}</h2></div>
+        <div class="metric-card"><h4>Drones</h4><h2>{{ totals.drones }}</h2></div>
+        <div class="metric-card"><h4>Total Uploads</h4><h2>{{ totals.uploads }}</h2></div>
+        <div class="metric-card" style="background:#991b1b;"><h4>Pending MSN Conflicts</h4><h2>{{ totals.pending_conflicts }}</h2></div>
+    </div>
+
+    <h2>By Department</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Department</th>
+                <th>Drones</th>
+                <th>Uploads</th>
+                <th>Completed</th>
+                <th>Failed</th>
+                <th>Critical</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+            <tr>
+                <td>{{ row.department.name }}</td>
+                <td>{{ row.drones }}</td>
+                <td>{{ row.uploads }}</td>
+                <td>{{ row.completed }}</td>
+                <td>{{ row.failed }}</td>
+                <td>{{ row.critical }}</td>
+                <td>
+                    <a class="btn" href="{{ url_for('dept.dashboard', department_id=row.department.id) }}">View Dashboard</a>
+                    <a class="btn secondary" href="{{ url_for('dept.drone_list', department_id=row.department.id) }}">View Drones</a>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="7" style="text-align:center;color:#64748b;">No departments yet — create one.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

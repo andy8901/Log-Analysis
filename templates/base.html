@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Neosky Drone Diagnostic Platform{% endblock %}</title>
+    <style>
+        body{
+            font-family:'Segoe UI',sans-serif;
+            background:linear-gradient(135deg,#0f172a,#1e293b);
+            margin:0;
+            padding:0;
+            min-height:100vh;
+        }
+        .topnav{
+            background:#0f172a;
+            color:white;
+            padding:14px 30px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            flex-wrap:wrap;
+            gap:12px;
+            border-bottom:1px solid #1e293b;
+        }
+        .topnav .brand{ font-weight:bold; font-size:1.1em; }
+        .topnav a{ color:#cbd5e1; text-decoration:none; margin-left:18px; font-size:0.92em; }
+        .topnav a:hover{ color:white; }
+        .topnav .who{ color:#64748b; font-size:0.85em; margin-left:18px; }
+        .wrap{ max-width:1300px; margin:30px auto; padding:0 20px 40px; }
+        .card{
+            background:white;
+            border-radius:20px;
+            padding:30px;
+            box-shadow:0 20px 50px rgba(0,0,0,0.3);
+        }
+        .flash{ padding:14px 18px; border-radius:10px; margin:0 auto 20px; max-width:1300px; font-weight:600; }
+        .flash.error{ background:#fee2e2; color:#991b1b; }
+        .flash.success{ background:#dcfce7; color:#166534; }
+        table{ width:100%; border-collapse:collapse; }
+        th,td{ border:1px solid #cbd5e1; padding:10px 12px; text-align:left; }
+        th{ background:#0f172a; color:white; }
+        .btn{
+            background:#0284c7; color:white; border:none; padding:10px 20px;
+            border-radius:10px; font-weight:bold; cursor:pointer; text-decoration:none;
+            display:inline-block; font-size:0.92em;
+        }
+        .btn.danger{ background:#dc2626; }
+        .btn.secondary{ background:#64748b; }
+        .input-group{ display:flex; flex-direction:column; margin-bottom:14px; }
+        .input-group label{ margin-bottom:6px; font-weight:600; font-size:0.9em; }
+        input,select{ padding:10px; border-radius:8px; border:1px solid #cbd5e1; }
+        .badge{
+            display:inline-block; padding:3px 10px; border-radius:999px;
+            font-size:0.78em; font-weight:bold; color:white; background:#64748b;
+        }
+        .badge-completed, .badge-PASS{ background:#166534; }
+        .badge-processing, .badge-queued, .badge-WARNING{ background:#92400e; }
+        .badge-failed, .badge-CRITICAL{ background:#991b1b; }
+        .summary-grid{
+            display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+            gap:16px; margin:20px 0 30px;
+        }
+        .metric-card{ background:#0f172a; color:white; padding:18px; border-radius:14px; text-align:center; }
+        .metric-card h4{ margin:0 0 6px 0; font-size:0.78em; opacity:0.8; }
+        .metric-card h2{ margin:0; font-size:1.6em; }
+        .filters{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; align-items:flex-end; }
+        .filters .input-group{ margin-bottom:0; min-width:160px; }
+    </style>
+</head>
+<body>
+
+<div class="topnav">
+    <div>
+        <span class="brand">Neosky Drone Diagnostic Platform</span>
+        {% if current_user.is_authenticated %}
+        <span class="who">
+            {{ current_user.full_name }}
+            ({{ current_user.role }}{% if current_user.department %} &middot; {{ current_user.department.name }}{% endif %})
+        </span>
+        {% endif %}
+    </div>
+    <div>
+        {% if current_user.is_authenticated %}
+            {% if current_user.is_admin %}
+                <a href="{{ url_for('admin.dashboard') }}">Admin Overview</a>
+                <a href="{{ url_for('admin.departments') }}">Departments</a>
+                <a href="{{ url_for('admin.users') }}">Users</a>
+                <a href="{{ url_for('admin.conflicts') }}">MSN Conflicts</a>
+                <a href="{{ url_for('admin.audit') }}">Audit Log</a>
+            {% else %}
+                <a href="{{ url_for('dept.dashboard') }}">Dashboard</a>
+                <a href="{{ url_for('dept.upload') }}">Upload Log</a>
+                <a href="{{ url_for('dept.drone_list') }}">Drones</a>
+            {% endif %}
+            <a href="{{ url_for('auth.logout') }}">Logout</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="wrap">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+</div>
+
+</body>
+</html>

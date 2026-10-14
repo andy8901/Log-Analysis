@@ -1,0 +1,668 @@
+{% extends "base.html" %}
+{% block title %}Report — {{ upload.original_filename }}{% endblock %}
+{% block content %}
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+<style>
+    .summary-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin:20px 0; }
+    .metric-card{ background:#0f172a; color:white; padding:20px; border-radius:16px; text-align:center; }
+    .metric-card h4{ margin:0 0 6px 0; font-size:0.8em; opacity:0.8; }
+    .metric-card h2{ margin:0; font-size:1.4em; }
+    .metric-card small{ opacity:0.7; }
+    .status-PASS{ background:#166534; }
+    .status-WARNING{ background:#92400e; }
+    .status-CRITICAL{ background:#991b1b; }
+    .alert-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:16px 0; }
+    @media (max-width:700px){ .alert-grid{ grid-template-columns:1fr; } }
+    .alert-section{ padding:14px 16px; border-radius:12px; font-size:0.92em; }
+    .alert-section.severe{ background:#fee2e2; color:#991b1b; }
+    .alert-section.warn{ background:#fef3c7; color:#92400e; }
+    .alert-section h3{ margin:0 0 8px 0; font-size:1em; }
+    .alert-section li{ margin:4px 0; }
+    .conclusion-box{ background:#eff6ff; color:#1e3a8a; padding:20px; border-radius:12px; margin:20px 0; line-height:1.6; }
+    .info-box{ background:#f8fafc; border:1px solid #e2e8f0; padding:16px 20px; border-radius:12px; margin:16px 0; }
+    .rca-box{ background:#f8fafc; border:1px solid #e2e8f0; border-left:6px solid #64748b; padding:20px; border-radius:12px; margin:20px 0; line-height:1.6; }
+    .rca-box.crash{ background:#fef2f2; border-left-color:#dc2626; }
+    .rca-box.warning{ background:#fffbeb; border-left-color:#d97706; }
+    .rca-box.normal{ background:#f0fdf4; border-left-color:#16a34a; }
+    .rca-badges{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 16px; }
+    .badge{ display:inline-block; padding:4px 12px; border-radius:999px; font-size:0.82em; font-weight:bold; color:white; background:#64748b; }
+    .badge-CRITICAL, .badge-CONFIRMED_CRASH{ background:#b91c1c; }
+    .badge-HIGH, .badge-PROBABLE_CRASH{ background:#dc2626; }
+    .badge-MEDIUM, .badge-POSSIBLE_LOSS_OF_CONTROL{ background:#d97706; }
+    .badge-LOW, .badge-WARNING{ background:#ca8a04; }
+    .badge-NONE, .badge-NORMAL{ background:#16a34a; }
+    .rca-box table{ margin:10px 0 6px; }
+    .rca-box .category-col{ font-weight:bold; white-space:nowrap; }
+    .rca-box .role-primary{ color:#b91c1c; font-weight:bold; }
+    .rca-box .role-preceding{ color:#92400e; }
+    .rca-box .role-secondary{ color:#334155; }
+    .rca-disclaimer{ font-size:0.82em; color:#64748b; margin-top:14px; font-style:italic; }
+    .timeline-wrap{ max-height:400px; overflow-y:auto; }
+    .type-tag{ font-family:monospace; font-size:0.85em; padding:2px 8px; border-radius:6px; background:#e2e8f0; }
+    .type-MODE{ background:#dbeafe; }
+    .type-ERR{ background:#fee2e2; }
+    .type-INCIDENT{ background:#fecaca; font-weight:bold; }
+    .type-CAM{ background:#dcfce7; }
+    .chart-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:24px; margin:20px 0 30px; }
+    .chart-box{ border:1px solid #e2e8f0; border-radius:14px; padding:16px; }
+    .chart-box h4{ margin:0 0 10px 0; }
+    .replay-controls{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; background:#0f172a; color:white; padding:14px 20px; border-radius:14px; margin:16px 0; }
+    .replay-controls select{ padding:6px 10px; border-radius:8px; }
+    .replay-controls input[type=range]{ flex:1; min-width:200px; }
+    .replay-time{ font-family:monospace; min-width:110px; }
+    .icon-btn{ background:#0284c7; color:white; border:none; width:40px; height:40px; border-radius:50%; cursor:pointer; font-size:1em; }
+</style>
+
+<div class="card">
+
+    <h1 style="text-align:center;">{{ upload.original_filename }}</h1>
+    <h3 style="text-align:center;color:#64748b;">
+        {{ upload.drone.msn if upload.drone else upload.msn_entered }} &middot;
+        {{ upload.drone_model }} &middot; {{ upload.department.name }} &middot;
+        uploaded by {{ upload.user.full_name }} on {{ upload.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
+    </h3>
+
+    <div class="summary-grid">
+
+        <div class="metric-card status-{{ report.status }}">
+            <h4>Status</h4>
+            <h2>{{ report.status }}</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>Alerts</h4>
+            <h2>{{ report.alerts|length }}</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>Flight Duration (armed)</h4>
+            <h2>{{ report.summary.flight_duration }} min</h2>
+            <small>{{ report.summary.flight_duration_source }}</small>
+        </div>
+
+        <div class="metric-card">
+            <h4>Log/Session Duration</h4>
+            <h2>{{ report.summary.session_duration }} min</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>GPS Altitude (max)</h4>
+            <h2>{{ report.summary.max_gps_altitude }} m</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>Baro Altitude (max)</h4>
+            <h2>{{ report.summary.max_baro_altitude }} m</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>Initial Voltage</h4>
+            <h2>{{ report.summary.initial_voltage }} V</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>Final Voltage</h4>
+            <h2>{{ report.summary.final_voltage }} V</h2>
+        </div>
+
+        <div class="metric-card">
+            <h4>Farthest Range from Home</h4>
+            <h2>{{ report.summary.max_range_m }} m</h2>
+            <small>home = first GPS fix in log</small>
+        </div>
+
+    </div>
+
+    <div class="conclusion-box">
+        <h3>Conclusion</h3>
+        <ul>
+        {% for line in report.conclusion %}
+            <li>{{ line }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+
+    {% if report.rca %}
+    {% set rca = report.rca %}
+    <div class="rca-box {{ 'crash' if rca.incident_level in ['CONFIRMED_CRASH', 'PROBABLE_CRASH'] else ('warning' if rca.incident_level in ['POSSIBLE_LOSS_OF_CONTROL', 'WARNING'] else 'normal') }}">
+        <h3>Root-Cause Analysis</h3>
+
+        <div class="rca-badges">
+            <span class="badge badge-{{ rca.incident_level }}">Incident: {{ rca.incident_level.replace('_', ' ')|title }}</span>
+            <span class="badge badge-{{ rca.crash_confidence }}">Crash Confidence: {{ rca.crash_confidence }}</span>
+            {% if rca.root_cause %}
+            <span class="badge" style="background:#0f172a;">Primary Cause Confidence: {{ rca.root_cause.confidence }}</span>
+            {% endif %}
+        </div>
+
+        <p><strong>Why this confidence:</strong></p>
+        <ul>
+        {% for reason in rca.crash_confidence_reasons %}
+            <li>{{ reason }}</li>
+        {% endfor %}
+        </ul>
+
+        {% if rca.root_cause %}
+        <p><strong>Primary cause:</strong> [{{ rca.root_cause.category }}] {{ rca.root_cause.label }} &mdash; {{ rca.root_cause.text }} <em>({{ rca.root_cause.t_min }})</em></p>
+
+        {% if rca.preceding_context or rca.secondary_events %}
+        <table>
+            <thead>
+                <tr><th>Time</th><th>Category</th><th>Role</th><th>Evidence</th></tr>
+            </thead>
+            <tbody>
+            {% for e in rca.preceding_context %}
+                <tr>
+                    <td>{{ e.t_min }}</td>
+                    <td class="category-col">{{ e.label }}</td>
+                    <td class="role-preceding">Preceding (unresolved)</td>
+                    <td>{{ e.text }}</td>
+                </tr>
+            {% endfor %}
+                <tr>
+                    <td>{{ rca.root_cause.t_min }}</td>
+                    <td class="category-col">{{ rca.root_cause.label }}</td>
+                    <td class="role-primary">Primary</td>
+                    <td>{{ rca.root_cause.text }}</td>
+                </tr>
+            {% for e in rca.secondary_events %}
+                <tr>
+                    <td>{{ e.t_min }}</td>
+                    <td class="category-col">{{ e.label }}</td>
+                    <td class="role-secondary">Secondary</td>
+                    <td>{{ e.text }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% endif %}
+
+        {% if rca.contributing_factors %}
+        <p><strong>Contributing factors:</strong></p>
+        <ul>
+        {% for f in rca.contributing_factors %}
+            <li>{{ f }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+
+        <p class="rca-disclaimer">{{ rca.disclaimer }}</p>
+    </div>
+    {% endif %}
+
+    <div class="info-box">
+        <strong>Camera:</strong> {{ report.camera.photo_count }} photo trigger(s) logged.
+        <br><small>{{ report.camera.note }}</small>
+    </div>
+
+    {% if report.alert_categories %}
+
+    <h2>Alerts by Category</h2>
+
+    <div class="alert-grid">
+    {% for category, items in report.alert_categories.items() %}
+        <div class="alert-section {{ 'severe' if category in ['Failsafes & Crash Detection', 'Possible Crash / Anomaly'] else 'warn' }}">
+            <h3>{{ category }} ({{ items|length }})</h3>
+            <ul>
+            {% for a in items %}
+                <li>{{ a }}</li>
+            {% endfor %}
+            </ul>
+        </div>
+    {% endfor %}
+    </div>
+
+    {% endif %}
+
+    <br>
+
+    <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='word') }}">
+        <button class="btn">Download Word</button>
+    </a>
+
+    <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='xlsx') }}">
+        <button class="btn">Download Excel</button>
+    </a>
+
+    <a href="{{ url_for('dept.dashboard', department_id=upload.department_id) }}">
+        <button class="btn secondary">Back to Dashboard</button>
+    </a>
+
+    <hr><br>
+
+    <h2>Flight Graphs</h2>
+
+    <div class="chart-grid">
+
+        <div class="chart-box">
+            <h4>Battery Voltage (V)</h4>
+            <canvas id="chartVolt"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4>Battery Current (A)</h4>
+            <canvas id="chartCurr"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4>Altitude (m) — Baro vs GPS</h4>
+            <canvas id="chartAlt"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4>Baro Altitude vs Battery Voltage</h4>
+            <canvas id="chartAltVolt"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4>Vibration (VIBE, m/s/s)</h4>
+            <canvas id="chartVibe"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4 id="motorChartTitle">Motor RPM</h4>
+            <canvas id="chartRpm"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4>Roll — Actual vs Desired (deg)</h4>
+            <canvas id="chartRoll"></canvas>
+        </div>
+
+        <div class="chart-box">
+            <h4>Pitch — Actual vs Desired (deg)</h4>
+            <canvas id="chartPitch"></canvas>
+        </div>
+
+    </div>
+
+    {% if report.param_deviations %}
+
+    <h2>Parameter Deviations vs Baseline ({{ report.baseline_file }})</h2>
+
+    <table>
+        <thead>
+            <tr><th>Parameter</th><th>Baseline</th><th>Actual</th></tr>
+        </thead>
+        <tbody>
+        {% for dev in report.param_deviations %}
+            <tr><td>{{ dev.param }}</td><td>{{ dev.baseline }}</td><td>{{ dev.actual }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <br>
+
+    {% endif %}
+
+    <h2>Telemetry Data</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Parameter</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th>Avg</th>
+                <th>Deviation</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for item in report.details %}
+        <tr>
+            <td>{{ item.cat }}</td>
+            <td>{{ item.param }}</td>
+            <td>{{ item.min }}</td>
+            <td>{{ item.max }}</td>
+            <td>{{ item.avg }}</td>
+            <td>{{ item.dev }}%</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <br><br>
+
+    <h2>Flight Path</h2>
+
+    <div class="replay-controls">
+        <button class="icon-btn" id="playPauseBtn" onclick="togglePlay()">▶</button>
+        <span class="replay-time"><span id="replayNow">00:00</span> / <span id="replayTotal">00:00</span></span>
+        <input type="range" id="replaySeek" min="0" max="1000" value="0" oninput="seekReplay(this.value)">
+        <label>Speed:
+            <select id="replaySpeed" onchange="setSpeed(this.value)">
+                <option value="0.5">0.5x</option>
+                <option value="1" selected>1x</option>
+                <option value="2">2x</option>
+                <option value="5">5x</option>
+            </select>
+        </label>
+    </div>
+
+    <div id="map" style="height:500px;border-radius:20px;"></div>
+
+    <br><br>
+
+    <h2>Event Timeline</h2>
+    <p>Every mode change, decoded error, system message, and possible-crash flag, in chronological order. Flight modes are shown by name, not number, and times are shown as mm:ss.</p>
+
+    <div class="timeline-wrap">
+    <table>
+        <thead>
+            <tr><th>Time</th><th>Type</th><th>Message</th></tr>
+        </thead>
+        <tbody>
+        {% for e in report.timeline %}
+            <tr>
+                <td>{{ e.t_min }}</td>
+                <td><span class="type-tag type-{{ e.type }}">{{ e.type }}</span></td>
+                <td>{{ e.text }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+</div>
+
+<script>
+
+const gpsData = {{ report.gps_path|tojson }};
+const gpsTimes = {{ report.gps_path_time|tojson }};
+const headings = {{ report.replay_headings|tojson }};
+const charts = {{ report.charts|tojson }};
+
+function lineChart(canvasId, datasets, yLabel, extraScales){
+    try {
+        const el = document.getElementById(canvasId);
+        if(!el) return;
+        if(typeof Chart === 'undefined'){
+            const ctx = el.getContext('2d');
+            ctx.font = '13px Segoe UI'; ctx.fillStyle = '#94a3b8';
+            ctx.fillText('Chart library failed to load', 10, 20);
+            return;
+        }
+        const scales = Object.assign({
+            x: { type: 'linear', title: { display: true, text: 'Time (s)' } },
+            y: { title: { display: true, text: yLabel } }
+        }, extraScales || {});
+        new Chart(el, {
+            type: 'line',
+            data: { datasets: datasets },
+            options: {
+                responsive: true,
+                animation: false,
+                parsing: false,
+                elements: { point: { radius: 0 } },
+                scales: scales
+            }
+        });
+    } catch (err) {
+        console.error('Chart render failed for', canvasId, err);
+    }
+}
+
+function toXY(t, y){
+    return t.map((tv, i) => ({x: tv, y: y[i]}));
+}
+
+if(charts.battery && charts.battery.t && charts.battery.t.length){
+    lineChart('chartVolt', [{
+        label: 'Voltage (V)', data: toXY(charts.battery.t, charts.battery.volt),
+        borderColor: '#0284c7', borderWidth: 2
+    }], 'Volts');
+}
+
+if(charts.current && charts.current.t && charts.current.t.length){
+    lineChart('chartCurr', [{
+        label: 'Current (A)', data: toXY(charts.current.t, charts.current.curr),
+        borderColor: '#dc2626', borderWidth: 2
+    }], 'Amps');
+}
+
+if(charts.altitude_baro || charts.altitude_gps){
+    const datasets = [];
+    if(charts.altitude_baro && charts.altitude_baro.t.length){
+        datasets.push({
+            label: 'Baro Altitude', data: toXY(charts.altitude_baro.t, charts.altitude_baro.alt),
+            borderColor: '#16a34a', borderWidth: 2
+        });
+    }
+    if(charts.altitude_gps && charts.altitude_gps.t.length){
+        datasets.push({
+            label: 'GPS Altitude', data: toXY(charts.altitude_gps.t, charts.altitude_gps.alt),
+            borderColor: '#9333ea', borderWidth: 2
+        });
+    }
+    if(datasets.length) lineChart('chartAlt', datasets, 'Metres');
+}
+
+if(charts.altitude_vs_voltage && charts.altitude_vs_voltage.alt_t && charts.altitude_vs_voltage.alt_t.length){
+    lineChart('chartAltVolt', [
+        {
+            label: 'Baro Altitude (m)', yAxisID: 'yAlt',
+            data: toXY(charts.altitude_vs_voltage.alt_t, charts.altitude_vs_voltage.alt),
+            borderColor: '#16a34a', borderWidth: 2
+        },
+        {
+            label: 'Voltage (V)', yAxisID: 'yVolt',
+            data: toXY(charts.altitude_vs_voltage.volt_t, charts.altitude_vs_voltage.volt),
+            borderColor: '#0284c7', borderWidth: 2
+        }
+    ], 'Metres', {
+        y: { display: false },
+        yAlt: { type: 'linear', position: 'left', title: { display: true, text: 'Altitude (m)' } },
+        yVolt: { type: 'linear', position: 'right', title: { display: true, text: 'Voltage (V)' }, grid: { drawOnChartArea: false } }
+    });
+}
+
+if(charts.vibration && charts.vibration.t && charts.vibration.t.length){
+    lineChart('chartVibe', [
+        { label: 'VibeX', data: toXY(charts.vibration.t, charts.vibration.x), borderColor: '#ef4444', borderWidth: 1.5 },
+        { label: 'VibeY', data: toXY(charts.vibration.t, charts.vibration.y), borderColor: '#22c55e', borderWidth: 1.5 },
+        { label: 'VibeZ', data: toXY(charts.vibration.t, charts.vibration.z), borderColor: '#3b82f6', borderWidth: 1.5 }
+    ], 'm/s/s');
+}
+
+const motorColors = ['#f59e0b', '#dc2626', '#16a34a', '#0284c7', '#9333ea', '#0891b2', '#ca8a04', '#be185d'];
+
+if(charts.motor_rpm && charts.motor_rpm.t && charts.motor_rpm.t.length){
+    lineChart('chartRpm', [{
+        label: 'RPM', data: toXY(charts.motor_rpm.t, charts.motor_rpm.rpm),
+        borderColor: '#f59e0b', borderWidth: 2
+    }], 'RPM');
+} else if(charts.motor_outputs && charts.motor_outputs.t && charts.motor_outputs.t.length){
+    document.getElementById('motorChartTitle').textContent = 'Motor Outputs (PWM µs) — RPM unavailable';
+    const channels = Object.keys(charts.motor_outputs.series);
+    const datasets = channels.map((ch, i) => ({
+        label: ch,
+        data: toXY(charts.motor_outputs.t, charts.motor_outputs.series[ch]),
+        borderColor: motorColors[i % motorColors.length],
+        borderWidth: 1.5
+    }));
+    lineChart('chartRpm', datasets, 'PWM (µs)');
+} else {
+    const el = document.getElementById('chartRpm');
+    if(el){
+        const ctx = el.getContext('2d');
+        ctx.font = '14px Segoe UI'; ctx.fillStyle = '#94a3b8';
+        ctx.fillText('No ESC RPM or motor output telemetry in this log', 10, 20);
+    }
+}
+
+if(charts.attitude_roll && charts.attitude_roll.t && charts.attitude_roll.t.length){
+    lineChart('chartRoll', [
+        { label: 'Actual', data: toXY(charts.attitude_roll.t, charts.attitude_roll.actual), borderColor: '#0284c7', borderWidth: 2 },
+        { label: 'Desired', data: toXY(charts.attitude_roll.t, charts.attitude_roll.desired), borderColor: '#f97316', borderWidth: 1.5, borderDash: [5,5] }
+    ], 'Degrees');
+}
+
+if(charts.attitude_pitch && charts.attitude_pitch.t && charts.attitude_pitch.t.length){
+    lineChart('chartPitch', [
+        { label: 'Actual', data: toXY(charts.attitude_pitch.t, charts.attitude_pitch.actual), borderColor: '#0284c7', borderWidth: 2 },
+        { label: 'Desired', data: toXY(charts.attitude_pitch.t, charts.attitude_pitch.desired), borderColor: '#f97316', borderWidth: 1.5, borderDash: [5,5] }
+    ], 'Degrees');
+}
+
+let map;
+const leafletOk = typeof L !== 'undefined';
+
+function droneIcon(headingDeg){
+    if(!leafletOk) return null;
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34"
+           style="transform:rotate(${headingDeg}deg);">
+        <circle cx="17" cy="17" r="15" fill="#0284c7" fill-opacity="0.15"/>
+        <path d="M17 3 L24 26 L17 21 L10 26 Z" fill="#0284c7" stroke="white" stroke-width="1.5"/>
+      </svg>`;
+    return L.divIcon({
+        html: svg,
+        className: '',
+        iconSize: [34, 34],
+        iconAnchor: [17, 17]
+    });
+}
+
+function bearing(p1, p2){
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
+    const lat1 = toRad(p1[0]), lat2 = toRad(p2[0]);
+    const dLon = toRad(p2[1] - p1[1]);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+if(gpsData.length > 0 && leafletOk){
+    try {
+        map = L.map('map', { maxZoom: 22 }).setView(gpsData[0], 17);
+
+        L.tileLayer(
+            'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            { attribution:'OpenStreetMap', maxZoom: 21, maxNativeZoom: 19 }
+        ).addTo(map);
+
+        const polyline = L.polyline(gpsData, { color:'red', weight:4 }).addTo(map);
+        map.fitBounds(polyline.getBounds());
+
+        L.marker(gpsData[0]).addTo(map).bindPopup("Takeoff");
+        L.marker(gpsData[gpsData.length - 1]).addTo(map).bindPopup("Landing");
+    } catch (err) {
+        console.error('Map init failed', err);
+    }
+} else if(gpsData.length > 0){
+    const mapEl = document.getElementById('map');
+    if(mapEl) mapEl.textContent = 'Map library failed to load; flight path unavailable.';
+}
+
+let replayMarker;
+const hasTimes = gpsTimes.length === gpsData.length && gpsTimes.length > 0;
+const t0 = hasTimes ? gpsTimes[0] : 0;
+const totalDuration = hasTimes ? gpsTimes[gpsTimes.length - 1] - t0 : (gpsData.length * 0.2);
+
+const replay = { playing: false, t: 0, speed: 1, lastFrame: null, rafId: null };
+
+function fmtTime(s){
+    s = Math.max(0, Math.round(s));
+    const m = Math.floor(s / 60), sec = s % 60;
+    return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function indexForTime(t){
+    if(!hasTimes) return Math.min(gpsData.length - 1, Math.floor(t / 0.2));
+    let lo = 0, hi = gpsTimes.length - 1;
+    while(lo < hi){
+        const mid = (lo + hi) >> 1;
+        if(gpsTimes[mid] - t0 < t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
+
+function renderReplayFrame(){
+    const idx = indexForTime(replay.t);
+
+    if(replayMarker){
+        replayMarker.setLatLng(gpsData[idx]);
+
+        let h;
+        if(headings.length === gpsData.length){
+            h = headings[idx];
+        } else if(idx < gpsData.length - 1){
+            h = bearing(gpsData[idx], gpsData[idx + 1]);
+        }
+        if(h !== undefined) replayMarker.setIcon(droneIcon(h));
+    }
+
+    document.getElementById('replayNow').textContent = fmtTime(replay.t);
+    document.getElementById('replayTotal').textContent = fmtTime(totalDuration);
+
+    const seekEl = document.getElementById('replaySeek');
+    if(document.activeElement !== seekEl && totalDuration > 0){
+        seekEl.value = Math.round((replay.t / totalDuration) * 1000);
+    }
+}
+
+function tick(wallNow){
+    if(!replay.playing) return;
+    if(replay.lastFrame !== null){
+        const dt = (wallNow - replay.lastFrame) / 1000;
+        replay.t = Math.min(totalDuration, replay.t + dt * replay.speed);
+    }
+    replay.lastFrame = wallNow;
+    renderReplayFrame();
+
+    if(replay.t >= totalDuration){
+        pauseReplay();
+        return;
+    }
+    replay.rafId = requestAnimationFrame(tick);
+}
+
+function playReplay(){
+    if(gpsData.length === 0) return;
+    if(!replayMarker && map){
+        const heading0 = headings.length ? headings[0] : 0;
+        replayMarker = L.marker(gpsData[0], { icon: droneIcon(heading0) }).addTo(map);
+    }
+    if(replay.t >= totalDuration) replay.t = 0;
+    replay.playing = true;
+    replay.lastFrame = null;
+    document.getElementById('playPauseBtn').textContent = '⏸';
+    replay.rafId = requestAnimationFrame(tick);
+}
+
+function pauseReplay(){
+    replay.playing = false;
+    if(replay.rafId) cancelAnimationFrame(replay.rafId);
+    document.getElementById('playPauseBtn').textContent = '▶';
+}
+
+function togglePlay(){
+    if(replay.playing) pauseReplay(); else playReplay();
+}
+
+function seekReplay(sliderVal){
+    if(!replayMarker && gpsData.length && map){
+        const heading0 = headings.length ? headings[0] : 0;
+        replayMarker = L.marker(gpsData[0], { icon: droneIcon(heading0) }).addTo(map);
+    }
+    replay.t = (sliderVal / 1000) * totalDuration;
+    renderReplayFrame();
+}
+
+function setSpeed(v){
+    replay.speed = parseFloat(v);
+}
+
+if(gpsData.length > 0){
+    document.getElementById('replayTotal').textContent = fmtTime(totalDuration);
+}
+
+</script>
+{% endblock %}

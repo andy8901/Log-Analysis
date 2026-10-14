@@ -1,0 +1,44 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# Render builds and runs the existing Dockerfile as-is.
+
+services:
+  - type: web
+    name: log-analysis
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # needs a persistent disk (below) for the DB + archived logs to survive restarts/deploys
+    healthCheckPath: /login
+    envVars:
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false  # set this to a real password in the Render dashboard before first deploy
+      - key: DATABASE_URL
+        value: sqlite:////app/data/app.db
+      - key: ARCHIVE_ROOT
+        value: /app/data/archive
+    disk:
+      name: log-analysis-data
+      mountPath: /app/data
+      sizeGB: 10
+
+# NOTE on persistent storage:
+#
+# Unlike the original single-user app, this platform's primary record of
+# truth is the database (users, departments, drones, uploads, analysis
+# results) -- not just the archived log files. Both now live under the one
+# mounted disk (/app/data), so a free-tier deploy with an ephemeral
+# filesystem is not an option here: every login, department, and uploaded
+# log would be wiped on the next deploy or spin-down. Use at least the
+# "starter" plan with the disk above attached.
+#
+# Set ADMIN_PASSWORD in the Render dashboard (Environment tab) to a real
+# password before the first deploy -- it's only read once, to bootstrap the
+# initial admin account when the database is empty. After that, log in as
+# ADMIN_USERNAME and manage passwords from the Users screen instead; changing
+# this env var later has no effect on an already-bootstrapped database.

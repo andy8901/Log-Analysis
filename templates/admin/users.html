@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Users</h1>
+
+    <h3>Create a new user</h3>
+    <form method="POST" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;align-items:end;margin-bottom:30px;">
+        <div class="input-group">
+            <label>Username</label>
+            <input type="text" name="username" required>
+        </div>
+        <div class="input-group">
+            <label>Full Name</label>
+            <input type="text" name="full_name" required>
+        </div>
+        <div class="input-group">
+            <label>Password</label>
+            <input type="password" name="password" required>
+        </div>
+        <div class="input-group">
+            <label>Role</label>
+            <select name="role" id="roleSelect" onchange="document.getElementById('deptField').style.display = this.value === 'department' ? '' : 'none';">
+                <option value="department">Department user</option>
+                <option value="admin">Administrator</option>
+            </select>
+        </div>
+        <div class="input-group" id="deptField">
+            <label>Department</label>
+            <select name="department_id">
+                {% for d in departments %}
+                <option value="{{ d.id }}">{{ d.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button class="btn" type="submit">Create User</button>
+    </form>
+
+    <h3>All users</h3>
+    <table>
+        <thead>
+            <tr><th>Username</th><th>Full Name</th><th>Role</th><th>Department</th><th>Active</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+            <tr>
+                <td>{{ u.username }}</td>
+                <td>{{ u.full_name }}</td>
+                <td>{{ u.role }}</td>
+                <td>{{ u.department.name if u.department else '—' }}</td>
+                <td>{{ 'Yes' if u.is_active_flag else 'No' }}</td>
+                <td style="display:flex;gap:8px;">
+                    <form method="POST" action="{{ url_for('admin.toggle_user_active', user_id=u.id) }}">
+                        <button class="btn secondary" type="submit">{{ 'Deactivate' if u.is_active_flag else 'Activate' }}</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('admin.reset_password', user_id=u.id) }}" style="display:flex;gap:6px;">
+                        <input type="password" name="password" placeholder="New password" required style="width:140px;">
+                        <button class="btn secondary" type="submit">Reset</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

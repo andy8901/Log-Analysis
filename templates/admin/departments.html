@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Departments{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Departments</h1>
+
+    <form method="POST" style="display:flex;gap:12px;align-items:flex-end;margin-bottom:24px;">
+        <div class="input-group" style="flex:1;">
+            <label>New Department Name</label>
+            <input type="text" name="name" required>
+        </div>
+        <button class="btn" type="submit">Create</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Slug</th><th>Users</th><th>Drones</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for d in departments %}
+            <tr>
+                <td>{{ d.name }}</td>
+                <td>{{ d.slug }}</td>
+                <td>{{ d.users|length }}</td>
+                <td>{{ d.drones|length }}</td>
+                <td>{{ d.created_at.strftime('%Y-%m-%d') if d.created_at else '' }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('admin.delete_department', dept_id=d.id) }}" style="display:inline;"
+                          onsubmit="return confirm('Delete department {{ d.name }}? This only works if it has no users or drones.');">
+                        <button class="btn danger" type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="6" style="text-align:center;color:#64748b;">No departments yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

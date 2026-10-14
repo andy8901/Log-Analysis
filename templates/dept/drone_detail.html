@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Drone {{ drone.msn }}{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Drone {{ drone.msn }}</h1>
+    <h3 style="text-align:center;color:#64748b;">{{ drone.model }} &middot; {{ drone.department.name }}</h3>
+
+    <div class="summary-grid">
+        <div class="metric-card"><h4>Total Logs</h4><h2>{{ uploads|length }}</h2></div>
+        <div class="metric-card"><h4>Completed</h4><h2>{{ uploads|selectattr('status','equalto','completed')|list|length }}</h2></div>
+        <div class="metric-card"><h4>Failed</h4><h2>{{ uploads|selectattr('status','equalto','failed')|list|length }}</h2></div>
+        <div class="metric-card"><h4>First Upload</h4><h2 style="font-size:1em;">{{ uploads[-1].uploaded_at.strftime('%Y-%m-%d') if uploads else '—' }}</h2></div>
+        <div class="metric-card"><h4>Latest Upload</h4><h2 style="font-size:1em;">{{ uploads[0].uploaded_at.strftime('%Y-%m-%d') if uploads else '—' }}</h2></div>
+    </div>
+
+    <h2>Flight History</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Uploaded</th>
+                <th>Flight Date</th>
+                <th>Status</th>
+                <th>Result</th>
+                <th>Critical Events</th>
+                <th>Reported By</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for u in uploads %}
+            <tr>
+                <td>{{ u.uploaded_at.strftime('%Y-%m-%d %H:%M') if u.uploaded_at else '' }}</td>
+                <td>{{ u.flight_date }}</td>
+                <td><span class="badge badge-{{ u.status }}">{{ u.status }}</span></td>
+                <td>
+                    {% if u.analysis %}
+                    <span class="badge badge-{{ u.analysis.report_status }}">{{ u.analysis.report_status }}</span>
+                    {% else %}&mdash;{% endif %}
+                </td>
+                <td>
+                    {% if u.analysis %}
+                        {% for a in u.analysis.get_top_alerts() %}
+                            <div style="font-size:0.85em;">{{ a }}</div>
+                        {% else %}
+                            <span style="color:#16a34a;">None</span>
+                        {% endfor %}
+                    {% endif %}
+                </td>
+                <td>{{ u.reported_by }}</td>
+                <td>
+                    {% if u.analysis %}
+                    <a class="btn" href="{{ url_for('dept.view_report', upload_id=u.id) }}">View</a>
+                    {% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="7" style="text-align:center;color:#64748b;">No logs uploaded for this drone yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
