@@ -1,8 +1,9 @@
 import os
 
-from flask import Flask
+from flask import Flask, jsonify
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 
 from config import Config
 
@@ -48,6 +49,19 @@ def create_app(config_object=Config):
     app.register_blueprint(dept_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(multilog_bp)
+
+    @app.route("/healthz")
+    def healthz():
+        # Unauthenticated on purpose -- a monitoring probe, auto-restart
+        # script, or load balancer health check shouldn't need a login.
+        # Actually runs a query rather than just returning 200 unconditionally,
+        # so a broken DB connection/disk shows up as unhealthy, not a false OK.
+        try:
+            db.session.execute(text("SELECT 1"))
+            return jsonify(status="ok"), 200
+        except Exception as exc:
+            app.logger.exception("Health check failed")
+            return jsonify(status="error", detail=str(exc)), 503
 
     with app.app_context():
         db.create_all()
