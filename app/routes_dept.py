@@ -17,6 +17,7 @@ from reports import generate_excel, generate_word_report
 from app import db
 from app.decorators import department_required
 from app.drive_sync import upload_to_drive
+from app.flight3d import build_track
 from app.models import AnalysisResult, AuditLog, Department, Drone, Upload
 from app.stats import daily_counts, derive_result_metrics, flight_summary_aggregate
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
@@ -264,7 +265,11 @@ def view_report(upload_id):
         return redirect(url_for("dept.dashboard", department_id=upload_row.department_id))
 
     report = upload_row.analysis.get_report()
-    return render_template("dept/report_view.html", upload=upload_row, report=report)
+    track, track_meta = build_track(report)
+    return render_template(
+        "dept/report_view.html", upload=upload_row, report=report,
+        track=track, track_meta=track_meta,
+    )
 
 
 @dept_bp.route("/export/<int:upload_id>/<fmt>")
@@ -300,6 +305,37 @@ def export(upload_id, fmt):
         # send_file streams the file; it's safe to drop our reference once
         # the response has been built -- Flask has already read it into the
         # response by the time this generator-less view returns.
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+@dept_bp.route("/export/<int:upload_id>/video")
+@login_required
+@department_required
+def export_video(upload_id):
+    from app.flight_video import render_flight_video
+
+    upload_row = _get_upload_scoped(upload_id)
+
+    if not upload_row.analysis:
+        abort(404)
+
+    report = upload_row.analysis.get_report()
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        ok = render_flight_video(report, tmp_path)
+        if not ok:
+            flash("No GPS track in this log -- nothing to render.", "error")
+            return redirect(url_for("dept.view_report", upload_id=upload_row.id))
+
+        download_name = f"Neosky_Flight3D_{upload_row.id}.mp4"
+        return send_file(tmp_path, as_attachment=True, download_name=download_name)
+    finally:
         try:
             os.remove(tmp_path)
         except OSError:

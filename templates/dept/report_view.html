@@ -2,9 +2,9 @@
 {% block title %}Report — {{ upload.original_filename }}{% endblock %}
 {% block content %}
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.169.0/examples/js/controls/OrbitControls.js"></script>
 
 <style>
     .summary-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin:20px 0; }
@@ -329,7 +329,11 @@
 
     <br><br>
 
-    <h2>Flight Path</h2>
+    <h2>Flight Path (3D)</h2>
+    <p style="color:#64748b;font-size:0.9em;">
+        Drag to rotate, scroll to zoom. The red cross marks the drone's
+        position and actual roll/pitch/yaw at the current replay time.
+    </p>
 
     <div class="replay-controls">
         <button class="icon-btn" id="playPauseBtn" onclick="togglePlay()">▶</button>
@@ -343,9 +347,12 @@
                 <option value="5">5x</option>
             </select>
         </label>
+        <a href="{{ url_for('dept.export_video', upload_id=upload.id) }}">
+            <button class="btn" type="button">Download 3D Video (MP4)</button>
+        </a>
     </div>
 
-    <div id="map" style="height:500px;border-radius:20px;"></div>
+    <div id="scene3d" style="height:500px;border-radius:20px;background:#0f172a;"></div>
 
     <br><br>
 
@@ -373,9 +380,8 @@
 
 <script>
 
-const gpsData = {{ report.gps_path|tojson }};
-const gpsTimes = {{ report.gps_path_time|tojson }};
-const headings = {{ report.replay_headings|tojson }};
+const track = {{ track|tojson }};
+const trackMeta = {{ track_meta|tojson }};
 const charts = {{ report.charts|tojson }};
 
 function lineChart(canvasId, datasets, yLabel, extraScales){
@@ -510,61 +516,119 @@ if(charts.attitude_pitch && charts.attitude_pitch.t && charts.attitude_pitch.t.l
     ], 'Degrees');
 }
 
-let map;
-const leafletOk = typeof L !== 'undefined';
+// ---- 3D flight path + attitude replay (Three.js) ----------------------
+// Axis convention matches app/flight3d.py: x=east, y=altitude(up), z=north.
+// yaw is compass heading (0=north/+z, clockwise toward east/+x) -- Three.js
+// is Y-up by default, which lines up with this directly, no axis remap.
 
-function droneIcon(headingDeg){
-    if(!leafletOk) return null;
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34"
-           style="transform:rotate(${headingDeg}deg);">
-        <circle cx="17" cy="17" r="15" fill="#0284c7" fill-opacity="0.15"/>
-        <path d="M17 3 L24 26 L17 21 L10 26 Z" fill="#0284c7" stroke="white" stroke-width="1.5"/>
-      </svg>`;
-    return L.divIcon({
-        html: svg,
-        className: '',
-        iconSize: [34, 34],
-        iconAnchor: [17, 17]
+let scene, camera, renderer, controls, flownLine, droneGlyph;
+const threeOk = typeof THREE !== 'undefined';
+
+function rotateVec(v, axis, angleDeg){
+    const a = axis.clone().normalize();
+    const theta = angleDeg * Math.PI / 180;
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
+    const cross = new THREE.Vector3().crossVectors(a, v);
+    const dot = a.dot(v);
+    return new THREE.Vector3(
+        v.x * cosT + cross.x * sinT + a.x * dot * (1 - cosT),
+        v.y * cosT + cross.y * sinT + a.y * dot * (1 - cosT),
+        v.z * cosT + cross.z * sinT + a.z * dot * (1 - cosT),
+    );
+}
+
+function droneGlyphPoints(roll, pitch, yaw, armLength){
+    const yawR = yaw * Math.PI / 180;
+    let forward = new THREE.Vector3(Math.sin(yawR), 0, Math.cos(yawR));
+    let right = new THREE.Vector3(Math.cos(yawR), 0, -Math.sin(yawR));
+    forward = rotateVec(forward, right, pitch);
+    right = rotateVec(right, forward, roll);
+
+    const tips = [forward, forward.clone().negate(), right, right.clone().negate()];
+    const points = [];
+    tips.forEach(t => {
+        points.push(0, 0, 0);
+        points.push(t.x * armLength, t.y * armLength, t.z * armLength);
     });
+    return points;
 }
 
-function bearing(p1, p2){
-    const toRad = d => d * Math.PI / 180;
-    const toDeg = r => r * 180 / Math.PI;
-    const lat1 = toRad(p1[0]), lat2 = toRad(p2[0]);
-    const dLon = toRad(p2[1] - p1[1]);
-    const y = Math.sin(dLon) * Math.cos(lat2);
-    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-    return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
+function init3D(){
+    const container = document.getElementById('scene3d');
+    if(!container) return;
 
-if(gpsData.length > 0 && leafletOk){
-    try {
-        map = L.map('map', { maxZoom: 22 }).setView(gpsData[0], 17);
-
-        L.tileLayer(
-            'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            { attribution:'OpenStreetMap', maxZoom: 21, maxNativeZoom: 19 }
-        ).addTo(map);
-
-        const polyline = L.polyline(gpsData, { color:'red', weight:4 }).addTo(map);
-        map.fitBounds(polyline.getBounds());
-
-        L.marker(gpsData[0]).addTo(map).bindPopup("Takeoff");
-        L.marker(gpsData[gpsData.length - 1]).addTo(map).bindPopup("Landing");
-    } catch (err) {
-        console.error('Map init failed', err);
+    if(!threeOk || !track.length){
+        container.style.display = 'flex';
+        container.style.alignItems = 'center';
+        container.style.justifyContent = 'center';
+        container.style.color = '#94a3b8';
+        container.textContent = !track.length
+            ? 'No GPS track in this log -- flight path unavailable.'
+            : '3D library failed to load.';
+        return;
     }
-} else if(gpsData.length > 0){
-    const mapEl = document.getElementById('map');
-    if(mapEl) mapEl.textContent = 'Map library failed to load; flight path unavailable.';
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f172a);
+
+    const w = container.clientWidth, h = container.clientHeight || 500;
+    camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 100000);
+
+    const [xMin, xMax] = trackMeta.x_range, [zMin, zMax] = trackMeta.z_range;
+    const span = Math.max(xMax - xMin, zMax - zMin, 10);
+    const cx = (xMin + xMax) / 2, cz = (zMin + zMax) / 2;
+    camera.position.set(cx + span * 0.7, span * 0.6 + 20, cz + span * 0.7);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
+    container.innerHTML = '';
+    container.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(cx, 0, cz);
+    controls.update();
+
+    const grid = new THREE.GridHelper(span * 1.6, 20, 0x334155, 0x1e293b);
+    grid.position.set(cx, trackMeta.y_range[0] - 1, cz);
+    scene.add(grid);
+
+    const fullPathPts = track.flatMap(p => [p.x, p.y, p.z]);
+    const fullGeom = new THREE.BufferGeometry();
+    fullGeom.setAttribute('position', new THREE.Float32BufferAttribute(fullPathPts, 3));
+    const fullLine = new THREE.Line(fullGeom, new THREE.LineBasicMaterial({ color: 0x475569 }));
+    scene.add(fullLine);
+
+    flownLine = new THREE.Line(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: 0x2a78d6, linewidth: 2 })
+    );
+    scene.add(flownLine);
+
+    droneGlyph = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: 0xe34948, linewidth: 2 })
+    );
+    scene.add(droneGlyph);
+
+    function onResize(){
+        const w2 = container.clientWidth, h2 = container.clientHeight || 500;
+        camera.aspect = w2 / h2;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w2, h2);
+    }
+    window.addEventListener('resize', onResize);
+
+    function animate(){
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
 }
 
-let replayMarker;
-const hasTimes = gpsTimes.length === gpsData.length && gpsTimes.length > 0;
-const t0 = hasTimes ? gpsTimes[0] : 0;
-const totalDuration = hasTimes ? gpsTimes[gpsTimes.length - 1] - t0 : (gpsData.length * 0.2);
+const hasTimes = track.length > 0;
+const t0 = hasTimes ? track[0].t : 0;
+const totalDuration = hasTimes ? track[track.length - 1].t - t0 : 0;
 
 const replay = { playing: false, t: 0, speed: 1, lastFrame: null, rafId: null };
 
@@ -575,28 +639,32 @@ function fmtTime(s){
 }
 
 function indexForTime(t){
-    if(!hasTimes) return Math.min(gpsData.length - 1, Math.floor(t / 0.2));
-    let lo = 0, hi = gpsTimes.length - 1;
+    if(!hasTimes) return 0;
+    let lo = 0, hi = track.length - 1;
     while(lo < hi){
         const mid = (lo + hi) >> 1;
-        if(gpsTimes[mid] - t0 < t) lo = mid + 1; else hi = mid;
+        if(track[mid].t - t0 < t) lo = mid + 1; else hi = mid;
     }
     return lo;
 }
 
 function renderReplayFrame(){
-    const idx = indexForTime(replay.t);
+    if(hasTimes && scene){
+        const idx = indexForTime(replay.t);
+        const flownPts = track.slice(0, idx + 1).flatMap(p => [p.x, p.y, p.z]);
+        flownLine.geometry.dispose();
+        flownLine.geometry = new THREE.BufferGeometry();
+        flownLine.geometry.setAttribute('position', new THREE.Float32BufferAttribute(flownPts, 3));
 
-    if(replayMarker){
-        replayMarker.setLatLng(gpsData[idx]);
-
-        let h;
-        if(headings.length === gpsData.length){
-            h = headings[idx];
-        } else if(idx < gpsData.length - 1){
-            h = bearing(gpsData[idx], gpsData[idx + 1]);
-        }
-        if(h !== undefined) replayMarker.setIcon(droneIcon(h));
+        const p = track[idx];
+        const [xMin, xMax] = trackMeta.x_range, [zMin, zMax] = trackMeta.z_range;
+        const span = Math.max(xMax - xMin, zMax - zMin, 10);
+        const armLength = span * 0.04;
+        const glyphPts = droneGlyphPoints(p.roll, p.pitch, p.yaw, armLength);
+        droneGlyph.geometry.dispose();
+        droneGlyph.geometry = new THREE.BufferGeometry();
+        droneGlyph.geometry.setAttribute('position', new THREE.Float32BufferAttribute(glyphPts, 3));
+        droneGlyph.position.set(p.x, p.y, p.z);
     }
 
     document.getElementById('replayNow').textContent = fmtTime(replay.t);
@@ -625,11 +693,7 @@ function tick(wallNow){
 }
 
 function playReplay(){
-    if(gpsData.length === 0) return;
-    if(!replayMarker && map){
-        const heading0 = headings.length ? headings[0] : 0;
-        replayMarker = L.marker(gpsData[0], { icon: droneIcon(heading0) }).addTo(map);
-    }
+    if(!hasTimes) return;
     if(replay.t >= totalDuration) replay.t = 0;
     replay.playing = true;
     replay.lastFrame = null;
@@ -648,10 +712,6 @@ function togglePlay(){
 }
 
 function seekReplay(sliderVal){
-    if(!replayMarker && gpsData.length && map){
-        const heading0 = headings.length ? headings[0] : 0;
-        replayMarker = L.marker(gpsData[0], { icon: droneIcon(heading0) }).addTo(map);
-    }
     replay.t = (sliderVal / 1000) * totalDuration;
     renderReplayFrame();
 }
@@ -660,8 +720,10 @@ function setSpeed(v){
     replay.speed = parseFloat(v);
 }
 
-if(gpsData.length > 0){
+init3D();
+if(hasTimes){
     document.getElementById('replayTotal').textContent = fmtTime(totalDuration);
+    renderReplayFrame();
 }
 
 </script>
