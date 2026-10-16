@@ -14,23 +14,7 @@
         <div class="metric-card" style="background:#991b1b;"><h4>Pending MSN Conflicts</h4><h2>{{ totals.pending_conflicts }}</h2></div>
     </div>
 
-    <h2>Daily Activity (last 14 days)</h2>
-    <table>
-        <thead>
-            <tr>
-            {% for date, count in trend %}
-                <th>{{ date.strftime('%m-%d') }}</th>
-            {% endfor %}
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-            {% for date, count in trend %}
-                <td style="text-align:center;">{{ count }}</td>
-            {% endfor %}
-            </tr>
-        </tbody>
-    </table>
+    {% include "_flight_summary.html" %}
 
     <h2>By Department</h2>
     <table>

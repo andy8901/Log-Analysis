@@ -19,6 +19,8 @@
         <div class="metric-card" style="background:#991b1b;"><h4>Critical</h4><h2>{{ summary.critical }}</h2></div>
     </div>
 
+    {% include "_flight_summary.html" %}
+
     {% if not current_user.is_admin %}
     <p><a class="btn" href="{{ url_for('dept.upload') }}">+ Upload New Log</a></p>
     {% endif %}

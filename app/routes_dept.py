@@ -18,7 +18,7 @@ from app import db
 from app.decorators import department_required
 from app.drive_sync import upload_to_drive
 from app.models import AnalysisResult, AuditLog, Department, Drone, MsnConflict, Upload
-from app.stats import derive_result_metrics
+from app.stats import daily_counts, derive_result_metrics, flight_summary_aggregate
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
 
 dept_bp = Blueprint("dept", __name__)
@@ -91,12 +91,16 @@ def dashboard():
             AnalysisResult.report_status == "CRITICAL"
         ).count(),
     }
+    flight_summary = flight_summary_aggregate(all_uploads.all())
+    trend = daily_counts(all_uploads.filter_by(status="completed").all(), days=14)
 
     return render_template(
         "dept/dashboard.html",
         department=department,
         uploads=uploads,
         summary=summary,
+        flight_summary=flight_summary,
+        trend=trend,
         model_choices=DRONE_MODEL_CHOICES,
         filters={"msn": msn, "model": model, "status": status},
         own_only=own_only,

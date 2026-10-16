@@ -137,6 +137,9 @@ class AnalysisResult(db.Model):
     flight_duration_min = db.Column(db.Float, nullable=True)
     battery_sag_pct = db.Column(db.Float, nullable=True)
     distance_travelled_m = db.Column(db.Float, nullable=True)
+    avg_altitude_m = db.Column(db.Float, nullable=True)
+    avg_battery_voltage_v = db.Column(db.Float, nullable=True)
+    avg_current_a = db.Column(db.Float, nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 

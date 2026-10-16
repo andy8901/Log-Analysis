@@ -2,13 +2,13 @@ import os
 import tempfile
 
 import pandas as pd
-from flask import Blueprint, abort, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 
 from app import db
 from app.decorators import admin_required
 from app.models import AnalysisResult, AuditLog, Department, Drone, MsnConflict, MultilogBatch, Upload, User, slugify
-from app.stats import daily_counts, drone_aggregate, person_aggregate, today_start, ytd_start
+from app.stats import daily_counts, drone_aggregate, flight_summary_aggregate, person_aggregate, today_start, ytd_start
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -57,9 +57,19 @@ def dashboard():
         "pending_conflicts": MsnConflict.query.filter_by(status="pending").count(),
     }
 
-    trend = daily_counts(Upload.query.filter_by(status="completed").all(), days=14)
+    all_completed_uploads = all_completed.all()
+    trend = daily_counts(all_completed_uploads, days=14)
+    flight_summary = flight_summary_aggregate(all_completed_uploads)
 
-    return render_template("admin/dashboard.html", rows=rows, totals=totals, trend=trend)
+    dept_chart = [
+        {"name": row["department"].name, "logs": row["uploads"]}
+        for row in rows
+    ]
+
+    return render_template(
+        "admin/dashboard.html", rows=rows, totals=totals, trend=trend,
+        flight_summary=flight_summary, dept_chart=dept_chart,
+    )
 
 
 # ---- Global drones / people views --------------------------------------
@@ -98,43 +108,62 @@ def all_people():
 
 @admin_bp.route("/export/raw-data.xlsx")
 def export_raw_data():
-    """The one bulk, cross-department raw-data export -- every completed
-    upload's key extracted fields, one row each. Admin-only: this is
-    exactly the data a department account is restricted from seeing in
-    bulk for anyone but itself."""
+    """The one bulk, cross-department raw-data export -- every log across
+    every department, one row each, using the full ~150-field extraction
+    (the same one Multilog Analysis uses), with Department Name prepended.
+    Admin-only: this is exactly the data a department account is
+    restricted from seeing in bulk for anyone but itself.
+
+    Two sources, unioned:
+    - Individual Log Analysis uploads: the raw archived log is re-parsed
+      with multilog_analyzer.analyze_single_log() to get the same rich
+      field set a Multilog batch would have produced for it (not stored
+      at upload time -- only derived there for the three dashboard
+      metrics -- so this is computed fresh here).
+    - Multilog Analysis batches: their stored result Excel already has
+      this exact column set; read and concatenated as-is.
+    """
+    from multilog_analyzer import analyze_single_log
+
+    rows = []
+    skipped = []
+
     uploads = (
         Upload.query.filter_by(status="completed")
         .order_by(Upload.uploaded_at.desc())
         .all()
     )
-
-    rows = []
     for u in uploads:
-        a = u.analysis
-        rows.append({
-            "Upload ID": u.id,
-            "Department": u.department.name,
-            "Drone MSN": u.drone.msn if u.drone else u.msn_entered,
-            "Drone Model": u.drone_model,
-            "Uploaded By": u.user.full_name,
-            "Uploaded At": u.uploaded_at.strftime("%Y-%m-%d %H:%M:%S") if u.uploaded_at else "",
-            "Flight Date": u.flight_date,
-            "Original Filename": u.original_filename,
-            "Result Status": a.report_status if a else "",
-            "Alert Count": a.alert_count if a else "",
-            "Flight Duration (min)": a.flight_duration_min if a else "",
-            "Battery Sag (%)": a.battery_sag_pct if a else "",
-            "Distance Travelled (m)": a.distance_travelled_m if a else "",
-            "Top Alerts": " | ".join(a.get_top_alerts()) if a else "",
-        })
+        if not u.archived_path or not os.path.exists(u.archived_path):
+            skipped.append(f"upload {u.id}: raw log no longer on disk")
+            continue
+        result = analyze_single_log(u.archived_path)
+        if "_error" in result:
+            skipped.append(f"upload {u.id} ({u.original_filename}): {result['_error']}")
+            continue
+        rows.append({"Department Name": u.department.name, **result})
+
+    batches = MultilogBatch.query.filter_by(status="completed").all()
+    for b in batches:
+        if not b.result_path or not os.path.exists(b.result_path):
+            skipped.append(f"multilog batch {b.id}: result file no longer on disk")
+            continue
+        batch_df = pd.read_excel(b.result_path, engine="openpyxl")
+        batch_df.insert(0, "Department Name", b.department.name)
+        rows.extend(batch_df.to_dict("records"))
 
     df = pd.DataFrame(rows)
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
         tmp_path = tmp.name
     try:
         df.to_excel(tmp_path, index=False, engine="openpyxl")
-        AuditLog.record(current_user, "export_raw_data", f"{len(rows)} rows")
+        AuditLog.record(
+            current_user, "export_raw_data",
+            f"{len(rows)} rows, {len(skipped)} skipped",
+        )
         db.session.commit()
+        if skipped:
+            current_app.logger.warning("export_raw_data skipped %d entries: %s", len(skipped), skipped)
         return send_file(tmp_path, as_attachment=True, download_name="all_departments_raw_data.xlsx")
     finally:
         try:

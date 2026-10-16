@@ -1,0 +1,112 @@
+{# Shared "graphical dashboard" panel -- used by both the admin overview
+   and the department dashboard, with whatever scope the caller already
+   filtered `flight_summary`/`trend` to (org-wide, one department, or just
+   one person's own uploads). Optional `dept_chart` (admin overview only)
+   adds a per-department comparison bar. #}
+
+<style>
+    .viz-root {
+        color-scheme: light;
+        --surface-1:      #fcfcfb;
+        --text-primary:   #0b0b0b;
+        --text-secondary: #52514e;
+        --muted:          #898781;
+        --gridline:       #e1e0d9;
+        --series-1:       #2a78d6;
+        --series-2:       #eb6834;
+        --series-3:       #1baf7a;
+        --series-4:       #eda100;
+    }
+    .viz-root .chart-box{ background:var(--surface-1); border:1px solid var(--gridline); border-radius:14px; padding:16px; margin-bottom:20px; }
+    .viz-root .chart-box h4{ margin:0 0 10px 0; color:var(--text-primary); }
+    .viz-root canvas{ max-height:260px; }
+</style>
+
+<div class="summary-grid">
+    <div class="metric-card"><h4>Total Logs Reviewed</h4><h2>{{ flight_summary.total_logs }}</h2></div>
+    <div class="metric-card"><h4>Total Flights</h4><h2>{{ flight_summary.total_flights }}</h2></div>
+    <div class="metric-card"><h4>Avg Flight Time</h4><h2>{{ flight_summary.avg_flight_time_min if flight_summary.avg_flight_time_min is not none else '—' }}<small> min</small></h2></div>
+    <div class="metric-card"><h4>Avg Distance Travelled</h4><h2>{{ flight_summary.avg_distance_m if flight_summary.avg_distance_m is not none else '—' }}<small> m</small></h2></div>
+    <div class="metric-card"><h4>Avg Altitude</h4><h2>{{ flight_summary.avg_altitude_m if flight_summary.avg_altitude_m is not none else '—' }}<small> m</small></h2></div>
+    <div class="metric-card"><h4>Avg Battery Voltage</h4><h2>{{ flight_summary.avg_battery_voltage_v if flight_summary.avg_battery_voltage_v is not none else '—' }}<small> V</small></h2></div>
+    <div class="metric-card"><h4>Avg Current</h4><h2>{{ flight_summary.avg_current_a if flight_summary.avg_current_a is not none else '—' }}<small> A</small></h2></div>
+</div>
+
+<div class="viz-root">
+    <div style="display:grid;grid-template-columns:{{ '1fr 1fr' if dept_chart else '1fr' }};gap:20px;">
+        <div class="chart-box">
+            <h4>Daily Activity (last 14 days)</h4>
+            <canvas id="trendChart"></canvas>
+        </div>
+        {% if dept_chart %}
+        <div class="chart-box">
+            <h4>Logs by Department</h4>
+            <canvas id="deptChart"></canvas>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="chart-box">
+        <h4>Takeoff Locations ({{ flight_summary.takeoffs|length }} flights with GPS)</h4>
+        <div id="takeoffMap" style="height:360px;border-radius:10px;"></div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+    const trendLabels = {{ trend|map(attribute=0)|map('string')|list|tojson }};
+    const trendValues = {{ trend|map(attribute=1)|list|tojson }};
+
+    function barChart(canvasId, labels, values, color){
+        const el = document.getElementById(canvasId);
+        if(!el || typeof Chart === 'undefined') return;
+        new Chart(el, {
+            type: 'bar',
+            data: { labels: labels, datasets: [{ data: values, backgroundColor: color, borderRadius: 4, maxBarThickness: 28 }] },
+            options: {
+                responsive: true,
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#e1e0d9' } },
+                },
+            },
+        });
+    }
+
+    barChart('trendChart', trendLabels, trendValues, '#2a78d6');
+
+    {% if dept_chart %}
+    const deptLabels = {{ dept_chart|map(attribute='name')|list|tojson }};
+    const deptValues = {{ dept_chart|map(attribute='logs')|list|tojson }};
+    const deptColors = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+    barChart('deptChart', deptLabels, deptValues, deptLabels.map((_, i) => deptColors[i % deptColors.length]));
+    {% endif %}
+
+    const takeoffs = {{ flight_summary.takeoffs|tojson }};
+    const mapEl = document.getElementById('takeoffMap');
+    if(takeoffs.length && typeof L !== 'undefined' && mapEl){
+        try {
+            const map = L.map('takeoffMap').setView([takeoffs[0].lat, takeoffs[0].lon], 10);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OpenStreetMap' }).addTo(map);
+            const markers = [];
+            takeoffs.forEach(t => {
+                const m = L.marker([t.lat, t.lon]).addTo(map)
+                    .bindPopup(`<strong>${t.drone}</strong><br>${t.department}<br>${t.date}`);
+                markers.push(m);
+            });
+            if(markers.length > 1){
+                map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
+            }
+        } catch (err) {
+            console.error('Takeoff map failed', err);
+        }
+    } else if(mapEl){
+        mapEl.textContent = takeoffs.length ? 'Map library failed to load.' : 'No GPS-tagged flights yet.';
+    }
+})();
+</script>

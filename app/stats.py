@@ -34,14 +34,28 @@ def battery_sag_pct(summary):
         return None
 
 
+def _series_mean(charts, key, field):
+    series = (charts or {}).get(key) or {}
+    values = series.get(field)
+    if not values:
+        return None
+    return round(sum(values) / len(values), 2)
+
+
 def derive_result_metrics(report):
-    """The three denormalized AnalysisResult columns, computed once at
-    upload time from a freshly-produced report dict."""
+    """The denormalized AnalysisResult columns, computed once at upload
+    time from a freshly-produced report dict -- all from data analyzer.py
+    already computed (gps_path, report['charts'] time series), nothing new
+    extracted from the raw log itself."""
     summary = report.get("summary", {}) or {}
+    charts = report.get("charts", {}) or {}
     return {
         "flight_duration_min": summary.get("flight_duration"),
         "battery_sag_pct": battery_sag_pct(summary),
         "distance_travelled_m": gps_path_length_m(report.get("gps_path")),
+        "avg_altitude_m": _series_mean(charts, "altitude_baro", "alt") or _series_mean(charts, "altitude_gps", "alt"),
+        "avg_battery_voltage_v": _series_mean(charts, "battery", "volt"),
+        "avg_current_a": _series_mean(charts, "current", "curr"),
     }
 
 
@@ -77,6 +91,41 @@ def drone_aggregate(drone):
         "critical_count": sum(1 for r in results if r.report_status == "CRITICAL"),
         "warning_count": sum(1 for r in results if r.report_status == "WARNING"),
         "pass_count": sum(1 for r in results if r.report_status == "PASS"),
+    }
+
+
+def flight_summary_aggregate(uploads):
+    """The 'graphical dashboard' panel: total logs reviewed, and org-wide
+    (or department-wide, or per-person, depending on what `uploads` the
+    caller already scoped) averages across every completed flight in that
+    set, plus every flight's takeoff point for a map. Used identically by
+    the admin overview, the admin per-department drill-in, and a
+    department's own dashboard -- only the input list's scope changes."""
+    completed = [u for u in uploads if u.status == "completed" and u.analysis]
+    results = [u.analysis for u in completed]
+
+    takeoffs = []
+    for u in completed:
+        report = u.analysis.get_report()
+        home = (report.get("summary") or {})
+        lat, lon = home.get("home_lat"), home.get("home_lon")
+        if lat is not None and lon is not None:
+            takeoffs.append({
+                "lat": lat, "lon": lon,
+                "drone": u.drone.msn if u.drone else u.msn_entered,
+                "department": u.department.name,
+                "date": u.flight_date or (u.uploaded_at.strftime("%Y-%m-%d") if u.uploaded_at else ""),
+            })
+
+    return {
+        "total_logs": len(uploads),
+        "total_flights": len(completed),
+        "avg_flight_time_min": _avg([r.flight_duration_min for r in results]),
+        "avg_distance_m": _avg([r.distance_travelled_m for r in results]),
+        "avg_altitude_m": _avg([r.avg_altitude_m for r in results]),
+        "avg_battery_voltage_v": _avg([r.avg_battery_voltage_v for r in results]),
+        "avg_current_a": _avg([r.avg_current_a for r in results]),
+        "takeoffs": takeoffs,
     }
 
 
