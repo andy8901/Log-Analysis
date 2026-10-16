@@ -3,6 +3,12 @@
 {% block content %}
 <div class="card">
     <h1 style="text-align:center;">{{ department.name }} Dashboard</h1>
+    {% if own_only %}
+    <p style="text-align:center;color:#64748b;">
+        Showing your own uploads only &mdash; individual activity is private;
+        only an administrator sees the full department picture.
+    </p>
+    {% endif %}
 
     <div class="summary-grid">
         <div class="metric-card"><h4>Registered Drones</h4><h2>{{ summary.total_drones }}</h2></div>

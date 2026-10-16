@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}All Drones{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">All Drones (Cross-Department)</h1>
+
+    <form method="GET" class="filters">
+        <div class="input-group">
+            <label>Department</label>
+            <select name="department_id" onchange="this.form.submit()">
+                <option value="">All</option>
+                {% for d in departments %}
+                <option value="{{ d.id }}" {{ 'selected' if selected_department_id == d.id }}>{{ d.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>MSN</th>
+                <th>Model</th>
+                <th>Department</th>
+                <th>Total Logs</th>
+                <th>Total Flights</th>
+                <th>Avg Flight Time (min)</th>
+                <th>Avg Battery Sag (%)</th>
+                <th>Avg Distance (m)</th>
+                <th>Critical</th>
+                <th>Warning</th>
+                <th>Pass</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+            <tr>
+                <td>{{ row.drone.msn }}</td>
+                <td>{{ row.drone.model }}</td>
+                <td>{{ row.drone.department.name }}</td>
+                <td>{{ row.total_logs }}</td>
+                <td>{{ row.total_flights }}</td>
+                <td>{{ row.avg_flight_time_min if row.avg_flight_time_min is not none else '—' }}</td>
+                <td>{{ row.avg_battery_sag_pct if row.avg_battery_sag_pct is not none else '—' }}</td>
+                <td>{{ row.avg_distance_m if row.avg_distance_m is not none else '—' }}</td>
+                <td>{{ row.critical_count }}</td>
+                <td>{{ row.warning_count }}</td>
+                <td>{{ row.pass_count }}</td>
+                <td><a class="btn" href="{{ url_for('dept.drone_detail', drone_id=row.drone.id) }}">History</a></td>
+            </tr>
+        {% else %}
+            <tr><td colspan="12" style="text-align:center;color:#64748b;">No drones registered yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

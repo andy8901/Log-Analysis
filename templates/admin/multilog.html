@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Multilog Batches{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">Multilog Batches (All Departments)</h1>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Submitted</th>
+                <th>Department</th>
+                <th>Submitted By</th>
+                <th>Files</th>
+                <th>Succeeded</th>
+                <th>Errors</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for b in batches %}
+            <tr>
+                <td>{{ b.created_at.strftime('%Y-%m-%d %H:%M') if b.created_at else '' }}</td>
+                <td>{{ b.department.name }}</td>
+                <td>{{ b.user.full_name }}</td>
+                <td>{{ b.file_count }}</td>
+                <td>{{ b.success_count }}</td>
+                <td>{{ b.error_count }}</td>
+                <td><span class="badge badge-{{ b.status }}">{{ b.status }}</span></td>
+                <td>
+                    {% if b.status == 'completed' %}
+                    <a class="btn" href="{{ url_for('multilog.download_batch', batch_id=b.id) }}">Download</a>
+                    {% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="8" style="text-align:center;color:#64748b;">No batches yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -23,3 +23,11 @@ class Config:
     # Bootstrap admin, created automatically on first run if no users exist.
     ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+
+    # Optional: mirror archived logs/reports into a Google Drive folder
+    # (<Department>/<MSN>/<filename>) via a service account -- either a true
+    # Shared Drive or an ordinary folder shared with the service account's
+    # email as Editor both work. Leave both unset to disable entirely --
+    # app/drive_sync.py no-ops when they're missing rather than erroring.
+    GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+    GOOGLE_DRIVE_ROOT_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_ROOT_FOLDER_ID")

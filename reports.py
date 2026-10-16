@@ -1,4 +1,9 @@
 import os
+import tempfile
+
+import matplotlib
+matplotlib.use("Agg")  # headless/server-side -- no display, just PNG output
+import matplotlib.pyplot as plt
 
 import pandas as pd
 from docx import Document
@@ -6,6 +11,83 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo.png")
+
+
+def _render_chart(png_path, series, title, ylabel):
+    """series: [(label, xs, ys, style_kwargs), ...]. Mirrors the in-browser
+    Chart.js graphs on the web report page, as static images for the
+    downloadable Word doc. Returns False (and writes nothing) if every
+    series is empty, so the caller can skip an empty chart cleanly."""
+    series = [s for s in series if s[1] and s[2]]
+    if not series:
+        return False
+
+    fig, ax = plt.subplots(figsize=(6.2, 3.2), dpi=150)
+    for label, xs, ys, style in series:
+        ax.plot(xs, ys, label=label, linewidth=1.3, **(style or {}))
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("Time (s)", fontsize=8)
+    ax.set_ylabel(ylabel, fontsize=8)
+    ax.tick_params(labelsize=7)
+    if len(series) > 1:
+        ax.legend(fontsize=7)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(png_path)
+    plt.close(fig)
+    return True
+
+
+def _add_chart_images(doc, report_data):
+    charts = report_data.get("charts") or {}
+    if not charts:
+        return
+
+    doc.add_heading("6.0 Flight Graphs", level=1)
+
+    specs = [
+        ("Battery Voltage (V)", [("Voltage", charts.get("battery", {}).get("t"),
+                                   charts.get("battery", {}).get("volt"), {"color": "#0284c7"})], "Volts"),
+        ("Battery Current (A)", [("Current", charts.get("current", {}).get("t"),
+                                   charts.get("current", {}).get("curr"), {"color": "#dc2626"})], "Amps"),
+        ("Altitude — Baro vs GPS (m)", [
+            ("Baro Altitude", charts.get("altitude_baro", {}).get("t"), charts.get("altitude_baro", {}).get("alt"), {"color": "#16a34a"}),
+            ("GPS Altitude", charts.get("altitude_gps", {}).get("t"), charts.get("altitude_gps", {}).get("alt"), {"color": "#9333ea"}),
+        ], "Metres"),
+        ("Vibration (m/s/s)", [
+            ("VibeX", charts.get("vibration", {}).get("t"), charts.get("vibration", {}).get("x"), {"color": "#ef4444"}),
+            ("VibeY", charts.get("vibration", {}).get("t"), charts.get("vibration", {}).get("y"), {"color": "#22c55e"}),
+            ("VibeZ", charts.get("vibration", {}).get("t"), charts.get("vibration", {}).get("z"), {"color": "#3b82f6"}),
+        ], "m/s/s"),
+        ("Roll — Actual vs Desired (deg)", [
+            ("Actual", charts.get("attitude_roll", {}).get("t"), charts.get("attitude_roll", {}).get("actual"), {"color": "#0284c7"}),
+            ("Desired", charts.get("attitude_roll", {}).get("t"), charts.get("attitude_roll", {}).get("desired"), {"color": "#f97316", "linestyle": "--"}),
+        ], "Degrees"),
+        ("Pitch — Actual vs Desired (deg)", [
+            ("Actual", charts.get("attitude_pitch", {}).get("t"), charts.get("attitude_pitch", {}).get("actual"), {"color": "#0284c7"}),
+            ("Desired", charts.get("attitude_pitch", {}).get("t"), charts.get("attitude_pitch", {}).get("desired"), {"color": "#f97316", "linestyle": "--"}),
+        ], "Degrees"),
+    ]
+
+    motor_rpm = charts.get("motor_rpm", {})
+    if motor_rpm.get("t"):
+        specs.append(("Motor RPM", [("RPM", motor_rpm.get("t"), motor_rpm.get("rpm"), {"color": "#f59e0b"})], "RPM"))
+    else:
+        motor_outputs = charts.get("motor_outputs", {})
+        series_data = motor_outputs.get("series") or {}
+        colors = ["#f59e0b", "#dc2626", "#16a34a", "#0284c7", "#9333ea", "#0891b2"]
+        specs.append((
+            "Motor Outputs (PWM µs) — RPM unavailable",
+            [(ch, motor_outputs.get("t"), vals, {"color": colors[i % len(colors)]})
+             for i, (ch, vals) in enumerate(series_data.items())],
+            "PWM (µs)",
+        ))
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for i, (title, series, ylabel) in enumerate(specs):
+            png_path = os.path.join(tmp_dir, f"chart_{i}.png")
+            if _render_chart(png_path, series, title, ylabel):
+                doc.add_picture(png_path, width=Inches(6))
 
 
 def generate_word_report(report_data, mission_info, output_path):
@@ -110,7 +192,8 @@ def generate_word_report(report_data, mission_info, output_path):
                 dev["param"], str(dev["baseline"]), str(dev["actual"]),
             )
 
-    doc.add_heading("6.0 Telemetry Summary", level=1)
+    _add_chart_images(doc, report_data)
+    doc.add_heading("7.0 Telemetry Summary", level=1)
     current_cat = ""
     t = None
     for item in report_data["details"]:
@@ -130,7 +213,7 @@ def generate_word_report(report_data, mission_info, output_path):
 
     if report_data.get("timeline"):
         doc.add_page_break()
-        doc.add_heading("7.0 Event Timeline (modes, errors, messages)", level=1)
+        doc.add_heading("8.0 Event Timeline (modes, errors, messages)", level=1)
         t = doc.add_table(rows=1, cols=3)
         t.style = "Table Grid"
         for i, txt in enumerate(["Time (mm:ss)", "Type", "Message"]):

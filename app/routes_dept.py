@@ -16,7 +16,9 @@ from reports import generate_excel, generate_word_report
 
 from app import db
 from app.decorators import department_required
+from app.drive_sync import upload_to_drive
 from app.models import AnalysisResult, AuditLog, Department, Drone, MsnConflict, Upload
+from app.stats import derive_result_metrics
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
 
 dept_bp = Blueprint("dept", __name__)
@@ -53,7 +55,15 @@ def home():
 def dashboard():
     department = resolve_department()
 
-    query = Upload.query.filter_by(department_id=department.id)
+    # Confidentiality rule: a department account only ever sees its own
+    # uploads here, never a colleague's -- only an admin gets the
+    # department-wide picture (via ?department_id= on this same route).
+    own_only = not current_user.is_admin
+    base_filter = {"department_id": department.id}
+    if own_only:
+        base_filter["user_id"] = current_user.id
+
+    query = Upload.query.filter_by(**base_filter)
 
     msn = request.args.get("msn", "").strip()
     model = request.args.get("model", "").strip()
@@ -70,7 +80,7 @@ def dashboard():
 
     uploads = query.order_by(Upload.uploaded_at.desc()).limit(500).all()
 
-    all_uploads = Upload.query.filter_by(department_id=department.id)
+    all_uploads = Upload.query.filter_by(**base_filter)
     summary = {
         "total_drones": Drone.query.filter_by(department_id=department.id).count(),
         "total_logs": all_uploads.count(),
@@ -89,6 +99,7 @@ def dashboard():
         summary=summary,
         model_choices=DRONE_MODEL_CHOICES,
         filters={"msn": msn, "model": model, "status": status},
+        own_only=own_only,
     )
 
 
@@ -198,12 +209,52 @@ def upload():
         alert_count=len(report.get("alerts") or []),
         top_alerts=json.dumps((report.get("alerts") or [])[:5]),
         report_json=json.dumps(report),
+        **derive_result_metrics(report),
     )
     db.session.add(analysis)
     AuditLog.record(current_user, "upload_analyzed", f"upload={upload_row.id} drone={drone.msn}")
     db.session.commit()
 
+    upload_to_drive(archived_path, department.name, drone.msn, os.path.basename(archived_path), kind="Raw Logs")
+    _sync_reports_to_drive(upload_row, report, department, drone)
+
     return redirect(url_for("dept.view_report", upload_id=upload_row.id))
+
+
+def _sync_reports_to_drive(upload_row, report, department, drone):
+    """Generates the Word/Excel reports fresh (just to get a file to hand
+    to Drive) and mirrors them into that drone's "Reports" subfolder,
+    alongside the raw log's own "Raw Logs" subfolder synced by the caller.
+    Best-effort: failures are logged and swallowed inside upload_to_drive()
+    itself."""
+    mission = {
+        "drone": upload_row.drone_model,
+        "msn": upload_row.msn_entered,
+        "date": upload_row.flight_date,
+        "reported_by": upload_row.reported_by,
+    }
+    for fmt, ext, generate in (
+        ("word", "docx", lambda p: generate_word_report(report, mission, p)),
+        ("xlsx", "xlsx", lambda p: generate_excel(report, p)),
+    ):
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            generate(tmp_path)
+            upload_to_drive(
+                tmp_path, department.name, drone.msn,
+                f"{upload_row.id}_{os.path.splitext(upload_row.original_filename)[0]}_Report.{ext}",
+            )
+        except Exception:
+            current_app.logger.warning(
+                "Report generation for Drive sync failed (upload=%s, fmt=%s)",
+                upload_row.id, fmt, exc_info=True,
+            )
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def _get_upload_scoped(upload_id):
@@ -211,7 +262,9 @@ def _get_upload_scoped(upload_id):
 
     if current_user.is_admin:
         return upload_row
-    if upload_row.department_id != current_user.department_id:
+    # Confidentiality rule: a department account can only ever open its own
+    # upload, not a colleague's, even within the same department.
+    if upload_row.user_id != current_user.id:
         abort(403)
     return upload_row
 
@@ -287,5 +340,13 @@ def drone_detail(drone_id):
     if not current_user.is_admin and drone.department_id != current_user.department_id:
         abort(403)
 
-    uploads = Upload.query.filter_by(drone_id=drone.id).order_by(Upload.uploaded_at.desc()).all()
-    return render_template("dept/drone_detail.html", drone=drone, uploads=uploads)
+    query = Upload.query.filter_by(drone_id=drone.id)
+    own_only = not current_user.is_admin
+    if own_only:
+        # Confidentiality rule: a department account sees this drone's
+        # history only for logs *it* uploaded -- a colleague's uploads
+        # against the same drone stay private to that colleague and admin.
+        query = query.filter_by(user_id=current_user.id)
+
+    uploads = query.order_by(Upload.uploaded_at.desc()).all()
+    return render_template("dept/drone_detail.html", drone=drone, uploads=uploads, own_only=own_only)

@@ -4,6 +4,12 @@
 <div class="card">
     <h1 style="text-align:center;">Drone {{ drone.msn }}</h1>
     <h3 style="text-align:center;color:#64748b;">{{ drone.model }} &middot; {{ drone.department.name }}</h3>
+    {% if own_only %}
+    <p style="text-align:center;color:#64748b;">
+        Showing only logs you uploaded for this drone &mdash; colleagues'
+        uploads against the same drone are private to them and admin.
+    </p>
+    {% endif %}
 
     <div class="summary-grid">
         <div class="metric-card"><h4>Total Logs</h4><h2>{{ uploads|length }}</h2></div>

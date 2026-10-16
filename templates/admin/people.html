@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}People{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 style="text-align:center;">People (Cross-Department)</h1>
+    <p style="color:#64748b;">
+        Individual activity is private to each account and admin &mdash;
+        this is the one place that per-person breakdown is visible.
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Department</th>
+                <th>Logs Today</th>
+                <th>Logs YTD</th>
+                <th>Total Logs</th>
+                <th>Last Upload</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+            <tr>
+                <td>{{ row.user.full_name }} ({{ row.user.username }})</td>
+                <td>{{ row.user.department.name if row.user.department else '—' }}</td>
+                <td>{{ row.logs_today }}</td>
+                <td>{{ row.logs_ytd }}</td>
+                <td>{{ row.total_logs }}</td>
+                <td>{{ row.last_upload_at.strftime('%Y-%m-%d %H:%M') if row.last_upload_at else '—' }}</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="6" style="text-align:center;color:#64748b;">No department users yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
