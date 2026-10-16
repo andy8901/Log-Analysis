@@ -7,7 +7,7 @@ from flask_login import current_user, login_required
 
 from app import db
 from app.decorators import admin_required
-from app.models import AnalysisResult, AuditLog, Department, Drone, MultilogBatch, Upload, User, slugify
+from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
 from app.stats import daily_counts, drone_aggregate, flight_summary_aggregate, person_aggregate, today_start, ytd_start
 
 admin_bp = Blueprint("admin", __name__)
@@ -107,21 +107,16 @@ def all_people():
 
 @admin_bp.route("/export/raw-data.xlsx")
 def export_raw_data():
-    """The one bulk, cross-department raw-data export -- every log across
-    every department, one row each, using the full ~150-field extraction
-    (the same one Multilog Analysis uses), with Department Name prepended.
-    Admin-only: this is exactly the data a department account is
-    restricted from seeing in bulk for anyone but itself.
-
-    Two sources, unioned:
-    - Individual Log Analysis uploads: the raw archived log is re-parsed
-      with multilog_analyzer.analyze_single_log() to get the same rich
-      field set a Multilog batch would have produced for it (not stored
-      at upload time -- only derived there for the three dashboard
-      metrics -- so this is computed fresh here).
-    - Multilog Analysis batches: their stored result Excel already has
-      this exact column set; read and concatenated as-is.
-    """
+    """Multilog Analysis, admin-only: one flat Excel, one row per log
+    across every department, using the full ~150-field extraction (the
+    same per-log analysis as the standalone desktop Multilog tool), with
+    Department Name prepended. Deliberately not something a department or
+    individual account can trigger -- it always runs over data departments
+    have *already* uploaded via Individual Log Analysis, never a fresh
+    file upload of its own. The raw archived log for each completed
+    upload is re-parsed with multilog_analyzer.analyze_single_log() to
+    get this field set (not stored at upload time -- only derived there
+    for the three dashboard metrics -- so it's computed fresh here)."""
     from multilog_analyzer import analyze_single_log
 
     rows = []
@@ -141,15 +136,6 @@ def export_raw_data():
             skipped.append(f"upload {u.id} ({u.original_filename}): {result['_error']}")
             continue
         rows.append({"Department Name": u.department.name, **result})
-
-    batches = MultilogBatch.query.filter_by(status="completed").all()
-    for b in batches:
-        if not b.result_path or not os.path.exists(b.result_path):
-            skipped.append(f"multilog batch {b.id}: result file no longer on disk")
-            continue
-        batch_df = pd.read_excel(b.result_path, engine="openpyxl")
-        batch_df.insert(0, "Department Name", b.department.name)
-        rows.extend(batch_df.to_dict("records"))
 
     df = pd.DataFrame(rows)
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
@@ -281,14 +267,6 @@ def reset_password(user_id):
     db.session.commit()
     flash(f"Password reset for '{user.username}'", "success")
     return redirect(url_for("admin.users"))
-
-
-# ---- Multilog batches (admin: every department's) -----------------------
-
-@admin_bp.route("/multilog")
-def all_multilog_batches():
-    batches = MultilogBatch.query.order_by(MultilogBatch.created_at.desc()).all()
-    return render_template("admin/multilog.html", batches=batches)
 
 
 # ---- Audit log -----------------------------------------------------------

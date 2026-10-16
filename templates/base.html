@@ -86,15 +86,13 @@
                 <a href="{{ url_for('admin.dashboard') }}">Admin Overview</a>
                 <a href="{{ url_for('admin.all_drones') }}">All Drones</a>
                 <a href="{{ url_for('admin.all_people') }}">People</a>
-                <a href="{{ url_for('admin.all_multilog_batches') }}">Multilog Batches</a>
                 <a href="{{ url_for('admin.departments') }}">Departments</a>
                 <a href="{{ url_for('admin.users') }}">Users</a>
                 <a href="{{ url_for('admin.audit') }}">Audit Log</a>
-                <a href="{{ url_for('admin.export_raw_data') }}">Export Raw Data</a>
+                <a href="{{ url_for('admin.export_raw_data') }}">Multilog Analysis (Export Raw Data)</a>
             {% else %}
                 <a href="{{ url_for('dept.dashboard') }}">Dashboard</a>
                 <a href="{{ url_for('dept.upload') }}">Individual Log Analysis</a>
-                <a href="{{ url_for('multilog.multilog') }}">Multilog Analysis</a>
                 <a href="{{ url_for('dept.drone_list') }}">Drones</a>
             {% endif %}
             <a href="{{ url_for('auth.logout') }}">Logout</a>

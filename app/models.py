@@ -158,37 +158,6 @@ class AnalysisResult(db.Model):
         return json.loads(self.top_alerts) if self.top_alerts else []
 
 
-class MultilogBatch(db.Model):
-    """A single 'Multilog Analysis' submission: many logs uploaded together,
-    reduced to one flat Excel report (one row per log), using the same
-    per-log field extraction as the standalone desktop multilog tool.
-    Not linked to a single Drone/MSN -- it's a bulk research/export action,
-    not part of the per-drone registry history."""
-
-    __tablename__ = "multilog_batches"
-
-    id = db.Column(db.Integer, primary_key=True)
-    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-
-    file_count = db.Column(db.Integer, nullable=False, default=0)
-    success_count = db.Column(db.Integer, nullable=False, default=0)
-    error_count = db.Column(db.Integer, nullable=False, default=0)
-    error_detail = db.Column(db.Text, nullable=True)  # JSON list of "filename: reason"
-
-    status = db.Column(db.String(20), nullable=False, default="processing")  # processing/completed/failed
-    result_path = db.Column(db.String(500), nullable=True)
-
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    completed_at = db.Column(db.DateTime, nullable=True)
-
-    department = db.relationship("Department")
-    user = db.relationship("User")
-
-    def get_errors(self):
-        return json.loads(self.error_detail) if self.error_detail else []
-
-
 class AuditLog(db.Model):
     __tablename__ = "audit_logs"
 

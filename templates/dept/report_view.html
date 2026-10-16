@@ -3,8 +3,6 @@
 {% block content %}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.169.0/examples/js/controls/OrbitControls.js"></script>
 
 <style>
     .summary-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin:20px 0; }
@@ -380,8 +378,6 @@
 
 <script>
 
-const track = {{ track|tojson }};
-const trackMeta = {{ track_meta|tojson }};
 const charts = {{ report.charts|tojson }};
 
 function lineChart(canvasId, datasets, yLabel, extraScales){
@@ -516,13 +512,35 @@ if(charts.attitude_pitch && charts.attitude_pitch.t && charts.attitude_pitch.t.l
     ], 'Degrees');
 }
 
+</script>
+
+<script type="module">
 // ---- 3D flight path + attitude replay (Three.js) ----------------------
 // Axis convention matches app/flight3d.py: x=east, y=altitude(up), z=north.
 // yaw is compass heading (0=north/+z, clockwise toward east/+x) -- Three.js
 // is Y-up by default, which lines up with this directly, no axis remap.
+//
+// Loaded as dynamic imports (not static <script> tags) specifically so a
+// CDN/network failure degrades to a text message in the 3D panel instead
+// of an uncaught module-loading error -- Three.js dropped its old global/
+// UMD build and examples/js/ (non-module) scripts in recent releases, so
+// this has to be loaded as real ES modules; "@latest" (no pinned version)
+// avoids 404s from guessing a version number that may not exist.
 
-let scene, camera, renderer, controls, flownLine, droneGlyph;
-const threeOk = typeof THREE !== 'undefined';
+const track = {{ track|tojson }};
+const trackMeta = {{ track_meta|tojson }};
+
+let scene, camera, renderer, controls, flownLine, droneGlyph, THREE;
+
+function showMessage(text){
+    const container = document.getElementById('scene3d');
+    if(!container) return;
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
+    container.style.justifyContent = 'center';
+    container.style.color = '#94a3b8';
+    container.textContent = text;
+}
 
 function rotateVec(v, axis, angleDeg){
     const a = axis.clone().normalize();
@@ -553,20 +571,9 @@ function droneGlyphPoints(roll, pitch, yaw, armLength){
     return points;
 }
 
-function init3D(){
+function init3D(OrbitControls){
     const container = document.getElementById('scene3d');
     if(!container) return;
-
-    if(!threeOk || !track.length){
-        container.style.display = 'flex';
-        container.style.alignItems = 'center';
-        container.style.justifyContent = 'center';
-        container.style.color = '#94a3b8';
-        container.textContent = !track.length
-            ? 'No GPS track in this log -- flight path unavailable.'
-            : '3D library failed to load.';
-        return;
-    }
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0f172a);
@@ -584,7 +591,7 @@ function init3D(){
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(cx, 0, cz);
     controls.update();
 
@@ -720,11 +727,31 @@ function setSpeed(v){
     replay.speed = parseFloat(v);
 }
 
-init3D();
-if(hasTimes){
-    document.getElementById('replayTotal').textContent = fmtTime(totalDuration);
-    renderReplayFrame();
-}
+// The replay-controls buttons use inline onclick/oninput/onchange, which
+// only ever resolve against the global scope -- a module script's own
+// top-level functions are NOT global, so they have to be attached to
+// `window` explicitly for those inline handlers to find them.
+window.togglePlay = togglePlay;
+window.seekReplay = seekReplay;
+window.setSpeed = setSpeed;
 
+if(!hasTimes){
+    showMessage('No GPS track in this log -- flight path unavailable.');
+} else {
+    import('https://cdn.jsdelivr.net/npm/three@latest/build/three.module.js')
+        .then(mod => {
+            THREE = mod;
+            return import('https://cdn.jsdelivr.net/npm/three@latest/examples/jsm/controls/OrbitControls.js');
+        })
+        .then(controlsMod => {
+            init3D(controlsMod.OrbitControls);
+            document.getElementById('replayTotal').textContent = fmtTime(totalDuration);
+            renderReplayFrame();
+        })
+        .catch(err => {
+            console.error('3D library failed to load', err);
+            showMessage('3D library failed to load -- check your network/firewall allows cdn.jsdelivr.net.');
+        });
+}
 </script>
 {% endblock %}

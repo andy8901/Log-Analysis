@@ -2,44 +2,50 @@
 
 A centralized, multi-department web platform for uploading ArduPilot flight
 logs (`.bin` / `.log` / `.tlog`) and getting back a health diagnostic:
-pass/warning/critical status, root-cause alerts, time-series graphs, a
-flight-path replay, and downloadable Word/Excel reports (now with chart
-images embedded in the Word report, not just tables).
+pass/warning/critical status, root-cause alerts, time-series graphs, an
+interactive 3D flight replay (plus a downloadable MP4 of it), and
+downloadable Word/Excel reports (now with chart images embedded in the
+Word report, not just tables).
 
 The log-parsing and diagnostic engine (`analyzer.py`, `rca.py`,
 `multilog_analyzer.py`, `baselines/`) is unchanged from the original tools.
 What's built around it: authentication, per-department *and per-person*
 data isolation, a central drone registry keyed by MSN, department
-dashboards, cross-department admin analytics, a bulk "Multilog Analysis"
-mode, and optional Google Drive sync.
+dashboards, cross-department admin analytics, an admin-only Multilog
+Analysis export, a 3D flight replay, and optional Google Drive sync.
 
 ## Roles
 
-- **Department user** — logs in, uploads logs for their own department.
-  **Sees only their own uploads, reports, and multilog batches** — not a
-  colleague's, even within the same department. Individual activity is
-  private; the drone registry (MSN/model/status) is still shared
+- **Department user** — logs in, uploads logs for their own department via
+  Individual Log Analysis. **Sees only their own uploads and reports** —
+  not a colleague's, even within the same department. Individual activity
+  is private; the drone registry (MSN/model/status) is still shared
   department-wide, since that's shared hardware, not personal activity.
+  Cannot run Multilog Analysis — that's admin-only (see below).
 - **Administrator** — the only role that sees the full picture: every
   department, every person's individual activity, cross-department drone
-  aggregates, and can bulk-export raw data to Excel. Admins don't upload
-  logs themselves; they view a department's dashboard the same way a
-  department user would, via `?department_id=`.
+  aggregates, and Multilog Analysis across everyone's data. Admins don't
+  upload logs themselves; they view a department's dashboard the same way
+  a department user would, via `?department_id=`.
 
 Access control is enforced server-side on every route — nobody can read,
 export, or browse another person's (or department's) uploads, drones, or
 reports by guessing an ID.
 
-## Two analysis modes
+## Analysis
 
 - **Individual Log Analysis** (`/upload`) — one log in, one full
-  diagnostic report out (status, RCA, charts, map replay, timeline),
-  linked to a specific drone by MSN.
-- **Multilog Analysis** (`/multilog`) — many logs in at once, one flat
-  Excel report out (one row per log, ~150 extracted fields per row), using
+  diagnostic report out (status, RCA, charts, a 3D flight replay, a
+  downloadable MP4 of that replay, timeline), linked to a specific drone
+  by MSN. This is the only way a log enters the system — departments and
+  individuals upload here, never through a separate bulk-upload path.
+- **Multilog Analysis** (`/admin/export/raw-data.xlsx`, admin-only) — one
+  flat Excel report, one row per log, ~150 extracted fields per row, using
   the same per-log field extraction as the standalone desktop Multilog
-  Analyzer tool. Not tied to the drone registry — it's a bulk
-  research/export action.
+  Analyzer tool. Deliberately **not** something a department or individual
+  account can trigger, and never a separate file upload of its own — it
+  always runs over logs departments have *already* uploaded via Individual
+  Log Analysis, across every department at once.
 
 ## Data model
 
@@ -47,7 +53,6 @@ reports by guessing an ID.
 Department -> Users
            -> Drones (MSN unique *within* a department)
                    -> Uploads -> AnalysisResult (full process_log() report, as JSON)
-           -> MultilogBatch (many logs -> one Excel report)
 ```
 
 Every upload is tied to a department, the user who submitted it, and (once
