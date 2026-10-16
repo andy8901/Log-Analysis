@@ -140,44 +140,37 @@ inbound ports on your router).
 | `ARCHIVE_ROOT` | `./archive` | Where original uploaded logs are permanently archived, per department/drone |
 | `UPLOAD_TMP` | `./uploads` | Scratch space for files mid-upload |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | Only read once, to bootstrap the first admin account when the DB is empty |
-| `GOOGLE_SERVICE_ACCOUNT_FILE` / `GOOGLE_DRIVE_ROOT_FOLDER_ID` | unset (Drive sync disabled) | See below |
+| `DRIVE_SYNC_ROOT` | unset (Drive sync disabled) | See below |
 
-## Optional: Google Drive sync (free-tier compatible)
+## Optional: Google Drive sync (the easy way — no Cloud Console)
 
-Every upload mirrors both the raw log and its generated reports into a
-Google Drive folder structure of
-`<root>/<Department>/<MSN>/<Raw Logs|Reports>/<filename>` — raw logs and
-reports land in separate subfolders. This needs **no paid Google
-Workspace** — a regular free Gmail account's "My Drive" folder works, as
-long as it's shared with a service account.
+Every upload mirrors both the raw log and its generated reports into
+`<DRIVE_SYNC_ROOT>/<Department>/<MSN>/<Raw Logs|Reports>/<filename>` — raw
+logs and reports land in separate subfolders. This is done with a plain
+filesystem copy, not the Drive API — no service account, no Cloud Console
+project, no JSON key.
 
-1. [console.cloud.google.com](https://console.cloud.google.com) → create/
-   pick a project → enable the **Google Drive API**.
-2. IAM & Admin → Service Accounts → **Create Service Account** (any name,
-   no special project roles needed).
-3. Open it → **Keys** tab → **Add Key** → **Create new key** → JSON.
-   Download it, keep it private — this is a credential.
-4. Open the JSON file, copy the `"client_email"` value (looks like
-   `xxx@your-project.iam.gserviceaccount.com`).
-5. In Google Drive, create (or pick) a folder to be the root, click
-   **Share**, paste that service-account email, give it **Editor** access.
-6. Copy the folder's id from its URL:
-   `https://drive.google.com/drive/folders/<THIS_PART>`.
-7. Set the two env vars:
-   ```bash
-   GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/the/downloaded-key.json
-   GOOGLE_DRIVE_ROOT_FOLDER_ID=<the folder id from step 6>
+1. Install **[Google Drive for Desktop](https://www.google.com/drive/download/)**
+   on the PC running this app, and sign in with a normal Google account.
+2. It creates a synced folder on disk (Windows default: it shows up as a
+   drive letter, e.g. `G:\My Drive`, or under
+   `C:\Users\<you>\Google Drive` depending on how you set it up during
+   install).
+3. Create a subfolder in there for this app, e.g. `G:\My Drive\LogAnalysis`.
+4. Set the env var to that path:
+   ```powershell
+   $env:DRIVE_SYNC_ROOT="G:\My Drive\LogAnalysis"
    ```
 
-Drive sync is entirely best-effort: if it's not configured, or Drive is
-unreachable, or the credentials break, uploads still succeed — only the
-Drive mirror step is skipped (with a warning logged), never the upload
-itself.
+That's it — whatever this app writes into that folder, Google Drive for
+Desktop uploads in the background automatically, exactly as if you'd
+dragged the file into that folder yourself in File Explorer.
 
-A personal Gmail account's quota caveat: files the service account
-creates count against *its own* Drive storage, not the Gmail owner's. For
-ArduPilot logs (a few MB to low hundreds of MB each) that's a long runway
-at zero cost, but it's worth knowing if upload volume gets heavy.
+Sync is entirely best-effort: if `DRIVE_SYNC_ROOT` isn't set, or the path
+is unreachable, or the disk is full, uploads still succeed — only the
+Drive-folder copy is skipped (with a warning logged), never the upload
+itself. Nothing here touches your Drive storage quota differently than
+dragging the same file in manually would.
 
 ## Deploying to the cloud
 
