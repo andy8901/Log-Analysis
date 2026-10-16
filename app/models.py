@@ -66,9 +66,15 @@ class User(UserMixin, db.Model):
 
 class Drone(db.Model):
     __tablename__ = "drones"
+    __table_args__ = (
+        # MSN is unique per department, not globally -- different
+        # departments are free to use the same MSN for their own separate
+        # drone record (e.g. each has its own "DRONE-001").
+        db.UniqueConstraint("department_id", "msn", name="uq_drone_department_msn"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
-    msn = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    msn = db.Column(db.String(80), nullable=False, index=True)
     model = db.Column(db.String(80), nullable=False)
     department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False)
     status = db.Column(db.String(20), nullable=False, default="operational")
@@ -150,27 +156,6 @@ class AnalysisResult(db.Model):
 
     def get_top_alerts(self):
         return json.loads(self.top_alerts) if self.top_alerts else []
-
-
-class MsnConflict(db.Model):
-    """Recorded whenever an upload's MSN already belongs to a different
-    department -- the upload is rejected and this is left for an admin to
-    resolve rather than silently reassigning or merging drone records."""
-
-    __tablename__ = "msn_conflicts"
-
-    id = db.Column(db.Integer, primary_key=True)
-    msn = db.Column(db.String(80), nullable=False)
-    requesting_department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False)
-    existing_drone_id = db.Column(db.Integer, db.ForeignKey("drones.id"), nullable=False)
-    requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    status = db.Column(db.String(20), nullable=False, default="pending")  # pending / reassigned / dismissed
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    resolved_at = db.Column(db.DateTime, nullable=True)
-
-    requesting_department = db.relationship("Department", foreign_keys=[requesting_department_id])
-    existing_drone = db.relationship("Drone", foreign_keys=[existing_drone_id])
-    requested_by = db.relationship("User", foreign_keys=[requested_by_id])
 
 
 class MultilogBatch(db.Model):

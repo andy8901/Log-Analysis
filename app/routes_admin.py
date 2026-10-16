@@ -7,7 +7,7 @@ from flask_login import current_user, login_required
 
 from app import db
 from app.decorators import admin_required
-from app.models import AnalysisResult, AuditLog, Department, Drone, MsnConflict, MultilogBatch, Upload, User, slugify
+from app.models import AnalysisResult, AuditLog, Department, Drone, MultilogBatch, Upload, User, slugify
 from app.stats import daily_counts, drone_aggregate, flight_summary_aggregate, person_aggregate, today_start, ytd_start
 
 admin_bp = Blueprint("admin", __name__)
@@ -54,7 +54,6 @@ def dashboard():
         "uploads": Upload.query.count(),
         "logs_today": all_completed.filter(Upload.uploaded_at >= today).count(),
         "logs_ytd": all_completed.filter(Upload.uploaded_at >= ytd).count(),
-        "pending_conflicts": MsnConflict.query.filter_by(status="pending").count(),
     }
 
     all_completed_uploads = all_completed.all()
@@ -282,56 +281,6 @@ def reset_password(user_id):
     db.session.commit()
     flash(f"Password reset for '{user.username}'", "success")
     return redirect(url_for("admin.users"))
-
-
-# ---- MSN conflicts -------------------------------------------------------
-
-@admin_bp.route("/conflicts")
-def conflicts():
-    pending = (
-        MsnConflict.query.filter_by(status="pending")
-        .order_by(MsnConflict.created_at.desc())
-        .all()
-    )
-    resolved = (
-        MsnConflict.query.filter(MsnConflict.status != "pending")
-        .order_by(MsnConflict.created_at.desc())
-        .limit(50)
-        .all()
-    )
-    return render_template("admin/conflicts.html", pending=pending, resolved=resolved)
-
-
-@admin_bp.route("/conflicts/<int:conflict_id>/reassign", methods=["POST"])
-def reassign_conflict(conflict_id):
-    from datetime import datetime, timezone
-
-    conflict = MsnConflict.query.get_or_404(conflict_id)
-    drone = conflict.existing_drone
-
-    drone.department_id = conflict.requesting_department_id
-    conflict.status = "reassigned"
-    conflict.resolved_at = datetime.now(timezone.utc)
-    AuditLog.record(
-        current_user, "reassign_drone",
-        f"drone={drone.msn} -> department={conflict.requesting_department_id}",
-    )
-    db.session.commit()
-    flash(f"Drone '{drone.msn}' reassigned to the requesting department", "success")
-    return redirect(url_for("admin.conflicts"))
-
-
-@admin_bp.route("/conflicts/<int:conflict_id>/dismiss", methods=["POST"])
-def dismiss_conflict(conflict_id):
-    from datetime import datetime, timezone
-
-    conflict = MsnConflict.query.get_or_404(conflict_id)
-    conflict.status = "dismissed"
-    conflict.resolved_at = datetime.now(timezone.utc)
-    AuditLog.record(current_user, "dismiss_conflict", f"msn={conflict.msn}")
-    db.session.commit()
-    flash("Conflict dismissed", "success")
-    return redirect(url_for("admin.conflicts"))
 
 
 # ---- Multilog batches (admin: every department's) -----------------------

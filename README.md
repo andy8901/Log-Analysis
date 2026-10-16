@@ -45,16 +45,16 @@ reports by guessing an ID.
 
 ```
 Department -> Users
-           -> Drones (unique MSN)
+           -> Drones (MSN unique *within* a department)
                    -> Uploads -> AnalysisResult (full process_log() report, as JSON)
            -> MultilogBatch (many logs -> one Excel report)
 ```
 
 Every upload is tied to a department, the user who submitted it, and (once
-resolved) a drone. If an uploaded MSN already belongs to a *different*
-department, the upload is rejected and an `MsnConflict` row is created for
-an admin to reassign or dismiss — logs are never silently merged across
-departments or MSNs.
+resolved) a drone. MSN only has to be unique within a department, not
+organization-wide — two different departments are free to each register
+their own drone under the same MSN string; they're entirely separate
+records and never merged.
 
 ## Admin analytics
 
@@ -132,6 +132,25 @@ Cloudflare Tunnel (free, gives a stable public hostname without opening
 inbound ports on your router).
 
 ## Environment variables
+
+Set these either as real environment variables, or (recommended, especially
+on Windows) in a `.env` file in the project root — it's loaded
+automatically on startup regardless of how you launch the app
+(`python wsgi.py`, `run_windows.bat`, gunicorn/waitress directly). A real
+environment variable already set in your shell always wins over `.env`.
+`.env` is gitignored — it's config, never commit it.
+
+```
+SECRET_KEY=something-random
+ADMIN_PASSWORD=a-real-password
+DRIVE_SYNC_ROOT=I:\My Drive\LogAnalysis
+```
+
+A `.env` file beats setting `$env:VAR=...` by hand in PowerShell: that only
+applies to the one terminal session it was typed in, so restarting the
+server from a new window — or forgetting you typed it — silently reverts
+to the old/default value. This is the #1 cause of "I changed the setting
+but it's not taking effect."
 
 | Variable | Default | Purpose |
 |---|---|---|

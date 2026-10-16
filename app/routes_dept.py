@@ -17,7 +17,7 @@ from reports import generate_excel, generate_word_report
 from app import db
 from app.decorators import department_required
 from app.drive_sync import upload_to_drive
-from app.models import AnalysisResult, AuditLog, Department, Drone, MsnConflict, Upload
+from app.models import AnalysisResult, AuditLog, Department, Drone, Upload
 from app.stats import daily_counts, derive_result_metrics, flight_summary_aggregate
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
 
@@ -145,31 +145,11 @@ def upload():
     tmp_path = os.path.join(current_app.config["UPLOAD_TMP"], f"{uuid4().hex}_{filename}")
     file.save(tmp_path)
 
-    # Resolve (or register) the drone this MSN belongs to, before touching
-    # the analysis engine at all.
-    drone = Drone.query.filter_by(msn=msn).first()
-
-    if drone and drone.department_id != department.id:
-        conflict = MsnConflict(
-            msn=msn,
-            requesting_department_id=department.id,
-            existing_drone_id=drone.id,
-            requested_by_id=current_user.id,
-        )
-        db.session.add(conflict)
-        AuditLog.record(
-            current_user, "msn_conflict",
-            f"MSN {msn} already belongs to department {drone.department_id}",
-        )
-        db.session.commit()
-        remove_with_retry(tmp_path)
-        flash(
-            f"MSN '{msn}' is already registered to another department. "
-            "This upload was not processed -- an administrator has been "
-            "flagged to review the conflict.",
-            "error",
-        )
-        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 409
+    # Resolve (or register) the drone this MSN belongs to, scoped to this
+    # department -- MSNs are only unique per department, so two
+    # departments are free to each have their own drone registered under
+    # the same MSN string.
+    drone = Drone.query.filter_by(msn=msn, department_id=department.id).first()
 
     if drone is None:
         drone = Drone(msn=msn, model=drone_model or "UNKNOWN", department_id=department.id)

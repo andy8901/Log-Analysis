@@ -1,6 +1,15 @@
 import os
 
+from dotenv import load_dotenv
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+# Loads a .env file in the project root into os.environ, if one exists --
+# regardless of which script starts the app (python wsgi.py, run_windows.bat,
+# gunicorn/waitress directly, ...) or which terminal/session it's run from.
+# override=False: a real environment variable already set in the shell
+# still wins, .env only fills in what isn't already there.
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
 
 
 class Config:
