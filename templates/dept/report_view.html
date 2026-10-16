@@ -2,6 +2,8 @@
 {% block title %}Report — {{ upload.original_filename }}{% endblock %}
 {% block content %}
 
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
 <style>
@@ -114,6 +116,17 @@
         </div>
 
     </div>
+
+    {% if report.summary.home_lat is not none and report.summary.home_lon is not none %}
+    <div class="info-box">
+        <h3 style="margin-top:0;">Takeoff Location</h3>
+        <p style="color:#64748b;margin-bottom:12px;">
+            Coordinates: <strong>{{ report.summary.home_lat }}, {{ report.summary.home_lon }}</strong>
+            <span style="font-size:0.85em;">(first GPS fix in the log)</span>
+        </p>
+        <div id="takeoffMap" style="height:300px;border-radius:14px;"></div>
+    </div>
+    {% endif %}
 
     <div class="conclusion-box">
         <h3>Conclusion</h3>
@@ -379,6 +392,29 @@
 <script>
 
 const charts = {{ report.charts|tojson }};
+const homeLat = {{ report.summary.home_lat|tojson }};
+const homeLon = {{ report.summary.home_lon|tojson }};
+
+(function initTakeoffMap(){
+    const el = document.getElementById('takeoffMap');
+    if(!el || homeLat === null || homeLon === null) return;
+    if(typeof L === 'undefined'){
+        el.textContent = 'Map library failed to load.';
+        return;
+    }
+    try {
+        const map = L.map('takeoffMap').setView([homeLat, homeLon], 16);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: 'OpenStreetMap', maxZoom: 21,
+        }).addTo(map);
+        L.marker([homeLat, homeLon]).addTo(map)
+            .bindPopup(`Takeoff<br>${homeLat}, ${homeLon}`)
+            .openPopup();
+    } catch (err) {
+        console.error('Takeoff map init failed', err);
+        el.textContent = 'Map failed to render.';
+    }
+})();
 
 function lineChart(canvasId, datasets, yLabel, extraScales){
     try {

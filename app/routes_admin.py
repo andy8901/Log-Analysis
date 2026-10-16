@@ -65,9 +65,12 @@ def dashboard():
         for row in rows
     ]
 
+    drive_sync_root = current_app.config.get("DRIVE_SYNC_ROOT")
+
     return render_template(
         "admin/dashboard.html", rows=rows, totals=totals, trend=trend,
         flight_summary=flight_summary, dept_chart=dept_chart,
+        drive_sync_root=drive_sync_root,
     )
 
 

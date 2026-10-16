@@ -4,98 +4,241 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Neosky Drone Diagnostic Platform{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%B8%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        :root{
+            --navy-950:#0b1220;
+            --navy-900:#0f172a;
+            --navy-800:#15223b;
+            --navy-700:#1e293b;
+            --slate-500:#64748b;
+            --slate-400:#94a3b8;
+            --slate-300:#cbd5e1;
+            --slate-200:#e2e8f0;
+            --slate-100:#f1f5f9;
+            --slate-50:#f8fafc;
+            --accent:#0284c7;
+            --accent-600:#0369a1;
+            --accent-light:#e0f2fe;
+            --good:#16a34a;
+            --good-bg:#dcfce7;
+            --good-ink:#166534;
+            --warn:#d97706;
+            --warn-bg:#fef3c7;
+            --warn-ink:#92400e;
+            --danger:#dc2626;
+            --danger-bg:#fee2e2;
+            --danger-ink:#991b1b;
+            --radius-sm:8px;
+            --radius-md:12px;
+            --radius-lg:18px;
+            --shadow-sm:0 1px 2px rgba(15,23,42,0.06);
+            --shadow-md:0 8px 24px rgba(15,23,42,0.10);
+            --shadow-lg:0 24px 60px rgba(15,23,42,0.35);
+            --font:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        }
+
+        *{ box-sizing:border-box; }
+
         body{
-            font-family:'Segoe UI',sans-serif;
-            background:linear-gradient(135deg,#0f172a,#1e293b);
+            font-family:var(--font);
+            background:linear-gradient(160deg,var(--navy-950) 0%,var(--navy-700) 55%,var(--navy-800) 100%);
+            background-attachment:fixed;
             margin:0;
             padding:0;
             min-height:100vh;
+            color:var(--navy-900);
+            -webkit-font-smoothing:antialiased;
         }
+
+        h1,h2,h3,h4{ font-weight:700; letter-spacing:-0.01em; }
+
+        /* ---- Top navigation ---- */
         .topnav{
-            background:#0f172a;
+            position:sticky; top:0; z-index:50;
+            background:rgba(15,23,42,0.92);
+            backdrop-filter:blur(10px);
             color:white;
-            padding:14px 30px;
+            padding:0 28px;
             display:flex;
             align-items:center;
             justify-content:space-between;
             flex-wrap:wrap;
             gap:12px;
-            border-bottom:1px solid #1e293b;
+            border-bottom:1px solid rgba(255,255,255,0.08);
+            box-shadow:0 1px 0 rgba(0,0,0,0.2);
         }
-        .topnav .brand{ font-weight:bold; font-size:1.1em; }
-        .topnav a{ color:#cbd5e1; text-decoration:none; margin-left:18px; font-size:0.92em; }
-        .topnav a:hover{ color:white; }
-        .topnav .who{ color:#64748b; font-size:0.85em; margin-left:18px; }
-        .wrap{ max-width:1300px; margin:30px auto; padding:0 20px 40px; }
+        .topnav-left{ display:flex; align-items:center; gap:16px; padding:14px 0; }
+        .topnav .brand{
+            font-weight:800; font-size:1.05em; letter-spacing:-0.01em;
+            display:flex; align-items:center; gap:8px;
+            white-space:nowrap;
+        }
+        .topnav .brand .logo-mark{
+            display:inline-flex; align-items:center; justify-content:center;
+            width:28px; height:28px; border-radius:9px;
+            background:linear-gradient(135deg,var(--accent),#38bdf8);
+            font-size:15px; box-shadow:var(--shadow-sm);
+        }
+        .topnav-links{ display:flex; align-items:center; gap:4px; flex-wrap:wrap; padding:10px 0; }
+        .topnav a{
+            color:var(--slate-300); text-decoration:none; font-size:0.86em; font-weight:500;
+            padding:8px 12px; border-radius:var(--radius-sm);
+            transition:background 0.15s ease, color 0.15s ease;
+            white-space:nowrap;
+        }
+        .topnav a:hover{ color:white; background:rgba(255,255,255,0.08); }
+        .topnav a.active{ color:white; background:rgba(2,132,199,0.35); }
+        .topnav a.logout-link{ color:#fca5a5; }
+        .topnav a.logout-link:hover{ background:rgba(220,38,38,0.18); color:#fecaca; }
+
+        .who-pill{
+            display:flex; align-items:center; gap:8px;
+            color:var(--slate-300); font-size:0.82em;
+            padding:5px 10px 5px 5px; border-radius:999px;
+            background:rgba(255,255,255,0.06);
+        }
+        .who-pill .avatar{
+            width:22px; height:22px; border-radius:50%;
+            background:linear-gradient(135deg,#38bdf8,var(--accent));
+            color:white; font-weight:700; font-size:0.72em;
+            display:flex; align-items:center; justify-content:center;
+        }
+        .who-pill .role-tag{
+            text-transform:uppercase; font-size:0.68em; letter-spacing:0.04em;
+            color:var(--slate-400);
+        }
+
+        /* ---- Layout ---- */
+        .wrap{ max-width:1300px; margin:30px auto; padding:0 20px 48px; }
+
         .card{
             background:white;
-            border-radius:20px;
-            padding:30px;
-            box-shadow:0 20px 50px rgba(0,0,0,0.3);
+            border-radius:var(--radius-lg);
+            padding:32px;
+            box-shadow:var(--shadow-lg);
+            border:1px solid rgba(255,255,255,0.6);
         }
-        .flash{ padding:14px 18px; border-radius:10px; margin:0 auto 20px; max-width:1300px; font-weight:600; }
-        .flash.error{ background:#fee2e2; color:#991b1b; }
-        .flash.success{ background:#dcfce7; color:#166534; }
-        table{ width:100%; border-collapse:collapse; }
-        th,td{ border:1px solid #cbd5e1; padding:10px 12px; text-align:left; }
-        th{ background:#0f172a; color:white; }
+
+        h1{ font-size:1.6em; margin-top:0; }
+        .card > h1:first-child{ margin-bottom:6px; }
+
+        /* ---- Flash messages ---- */
+        .flash{
+            padding:13px 18px; border-radius:var(--radius-md); margin:0 auto 16px; max-width:1300px;
+            font-weight:600; font-size:0.92em; border-left:4px solid transparent;
+            box-shadow:var(--shadow-sm);
+        }
+        .flash.error{ background:var(--danger-bg); color:var(--danger-ink); border-left-color:var(--danger); }
+        .flash.success{ background:var(--good-bg); color:var(--good-ink); border-left-color:var(--good); }
+
+        /* ---- Tables ---- */
+        table{ width:100%; border-collapse:collapse; font-size:0.92em; }
+        th,td{ border-bottom:1px solid var(--slate-200); padding:11px 14px; text-align:left; }
+        th{
+            background:var(--navy-900); color:white; font-weight:600;
+            font-size:0.82em; text-transform:uppercase; letter-spacing:0.03em;
+        }
+        th:first-child{ border-top-left-radius:var(--radius-sm); }
+        th:last-child{ border-top-right-radius:var(--radius-sm); }
+        tbody tr{ transition:background 0.12s ease; }
+        tbody tr:nth-child(even){ background:var(--slate-50); }
+        tbody tr:hover{ background:var(--accent-light); }
+
+        /* ---- Buttons ---- */
         .btn{
-            background:#0284c7; color:white; border:none; padding:10px 20px;
-            border-radius:10px; font-weight:bold; cursor:pointer; text-decoration:none;
-            display:inline-block; font-size:0.92em;
+            background:var(--accent); color:white; border:none; padding:10px 20px;
+            border-radius:var(--radius-sm); font-weight:600; cursor:pointer; text-decoration:none;
+            display:inline-block; font-size:0.88em; box-shadow:var(--shadow-sm);
+            transition:background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
         }
-        .btn.danger{ background:#dc2626; }
-        .btn.secondary{ background:#64748b; }
+        .btn:hover{ background:var(--accent-600); box-shadow:var(--shadow-md); transform:translateY(-1px); }
+        .btn:active{ transform:translateY(0); }
+        .btn.danger{ background:var(--danger); }
+        .btn.danger:hover{ background:#b91c1c; }
+        .btn.secondary{ background:var(--slate-500); }
+        .btn.secondary:hover{ background:#475569; }
+
+        /* ---- Forms ---- */
         .input-group{ display:flex; flex-direction:column; margin-bottom:14px; }
-        .input-group label{ margin-bottom:6px; font-weight:600; font-size:0.9em; }
-        input,select{ padding:10px; border-radius:8px; border:1px solid #cbd5e1; }
-        .badge{
-            display:inline-block; padding:3px 10px; border-radius:999px;
-            font-size:0.78em; font-weight:bold; color:white; background:#64748b;
+        .input-group label{ margin-bottom:6px; font-weight:600; font-size:0.86em; color:var(--navy-800); }
+        input,select{
+            padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--slate-300);
+            font-family:var(--font); font-size:0.92em; transition:border-color 0.15s ease, box-shadow 0.15s ease;
+            background:white;
         }
-        .badge-completed, .badge-PASS{ background:#166534; }
-        .badge-processing, .badge-queued, .badge-WARNING{ background:#92400e; }
-        .badge-failed, .badge-CRITICAL{ background:#991b1b; }
-        .summary-grid{
-            display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-            gap:16px; margin:20px 0 30px;
+        input:focus,select:focus{
+            outline:none; border-color:var(--accent);
+            box-shadow:0 0 0 3px var(--accent-light);
         }
-        .metric-card{ background:#0f172a; color:white; padding:18px; border-radius:14px; text-align:center; }
-        .metric-card h4{ margin:0 0 6px 0; font-size:0.78em; opacity:0.8; }
-        .metric-card h2{ margin:0; font-size:1.6em; }
         .filters{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; align-items:flex-end; }
         .filters .input-group{ margin-bottom:0; min-width:160px; }
+
+        /* ---- Badges ---- */
+        .badge{
+            display:inline-block; padding:4px 11px; border-radius:999px;
+            font-size:0.74em; font-weight:700; color:white; background:var(--slate-500);
+            text-transform:uppercase; letter-spacing:0.03em;
+        }
+        .badge-completed, .badge-PASS{ background:var(--good); }
+        .badge-processing, .badge-queued, .badge-WARNING{ background:var(--warn); }
+        .badge-failed, .badge-CRITICAL{ background:var(--danger); }
+
+        /* ---- Stat tiles ---- */
+        .summary-grid{
+            display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+            gap:14px; margin:20px 0 30px;
+        }
+        .metric-card{
+            background:linear-gradient(155deg,var(--navy-900),var(--navy-800));
+            color:white; padding:18px 20px; border-radius:var(--radius-md); text-align:center;
+            box-shadow:var(--shadow-md);
+            transition:transform 0.15s ease;
+        }
+        .metric-card:hover{ transform:translateY(-2px); }
+        .metric-card h4{
+            margin:0 0 8px 0; font-size:0.72em; opacity:0.75;
+            text-transform:uppercase; letter-spacing:0.04em; font-weight:600;
+        }
+        .metric-card h2{ margin:0; font-size:1.65em; font-variant-numeric:tabular-nums; font-weight:700; }
+        .metric-card small{ opacity:0.65; font-size:0.72em; }
     </style>
 </head>
 <body>
 
 <div class="topnav">
-    <div>
-        <span class="brand">Neosky Drone Diagnostic Platform</span>
+    <div class="topnav-left">
+        <span class="brand">
+            <span class="logo-mark">🛸</span>
+            Neosky Drone Diagnostic Platform
+        </span>
         {% if current_user.is_authenticated %}
-        <span class="who">
+        <span class="who-pill">
+            <span class="avatar">{{ current_user.full_name[0]|upper }}</span>
             {{ current_user.full_name }}
-            ({{ current_user.role }}{% if current_user.department %} &middot; {{ current_user.department.name }}{% endif %})
+            <span class="role-tag">{{ current_user.role }}{% if current_user.department %} &middot; {{ current_user.department.name }}{% endif %}</span>
         </span>
         {% endif %}
     </div>
-    <div>
+    <div class="topnav-links">
         {% if current_user.is_authenticated %}
             {% if current_user.is_admin %}
-                <a href="{{ url_for('admin.dashboard') }}">Admin Overview</a>
-                <a href="{{ url_for('admin.all_drones') }}">All Drones</a>
-                <a href="{{ url_for('admin.all_people') }}">People</a>
-                <a href="{{ url_for('admin.departments') }}">Departments</a>
-                <a href="{{ url_for('admin.users') }}">Users</a>
-                <a href="{{ url_for('admin.audit') }}">Audit Log</a>
-                <a href="{{ url_for('admin.export_raw_data') }}">Multilog Analysis (Export Raw Data)</a>
+                <a href="{{ url_for('admin.dashboard') }}" class="{{ 'active' if request.endpoint == 'admin.dashboard' }}">Admin Overview</a>
+                <a href="{{ url_for('admin.all_drones') }}" class="{{ 'active' if request.endpoint == 'admin.all_drones' }}">All Drones</a>
+                <a href="{{ url_for('admin.all_people') }}" class="{{ 'active' if request.endpoint == 'admin.all_people' }}">People</a>
+                <a href="{{ url_for('admin.departments') }}" class="{{ 'active' if request.endpoint == 'admin.departments' }}">Departments</a>
+                <a href="{{ url_for('admin.users') }}" class="{{ 'active' if request.endpoint == 'admin.users' }}">Users</a>
+                <a href="{{ url_for('admin.audit') }}" class="{{ 'active' if request.endpoint == 'admin.audit' }}">Audit Log</a>
+                <a href="{{ url_for('admin.export_raw_data') }}">Multilog Analysis</a>
             {% else %}
-                <a href="{{ url_for('dept.dashboard') }}">Dashboard</a>
-                <a href="{{ url_for('dept.upload') }}">Individual Log Analysis</a>
-                <a href="{{ url_for('dept.drone_list') }}">Drones</a>
+                <a href="{{ url_for('dept.dashboard') }}" class="{{ 'active' if request.endpoint == 'dept.dashboard' }}">Dashboard</a>
+                <a href="{{ url_for('dept.upload') }}" class="{{ 'active' if request.endpoint == 'dept.upload' }}">Individual Log Analysis</a>
+                <a href="{{ url_for('dept.drone_list') }}" class="{{ 'active' if request.endpoint == 'dept.drone_list' }}">Drones</a>
             {% endif %}
-            <a href="{{ url_for('auth.logout') }}">Logout</a>
+            <a href="{{ url_for('auth.logout') }}" class="logout-link">Logout</a>
         {% endif %}
     </div>
 </div>

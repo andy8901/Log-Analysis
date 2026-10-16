@@ -4,6 +4,13 @@
 <div class="card">
     <h1 style="text-align:center;">Organization-Wide Overview</h1>
 
+    <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:24px;font-size:0.85em;color:var(--slate-500);">
+        <span style="display:inline-flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:{{ 'var(--good)' if drive_sync_root else 'var(--slate-300)' }};display:inline-block;"></span>
+            Drive sync: {{ drive_sync_root if drive_sync_root else 'not configured' }}
+        </span>
+    </div>
+
     <div class="summary-grid">
         <div class="metric-card"><h4>Departments</h4><h2>{{ totals.departments }}</h2></div>
         <div class="metric-card"><h4>Users</h4><h2>{{ totals.users }}</h2></div>
