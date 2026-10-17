@@ -1,0 +1,14 @@
+{# Shared drone-model thumbnail, used by the fleet/drone-list/drone-detail
+   pages -- maps a few real model names to their product photos, with a
+   generic fallback for any model without one. #}
+{% macro drone_thumb(model, size=40) %}
+{% set images = {
+    'Tavas': 'drones/tavas.png',
+    'Nimble': 'drones/nimble.png',
+} %}
+{% set src = images.get(model, 'drones/generic.webp') %}
+{# Product photos are shot on a white background -- a fixed white chip
+   (not the theme's card color) keeps them legible in dark mode too. #}
+<img src="{{ url_for('static', filename=src) }}" alt="{{ model }}"
+     style="width:{{ size }}px;height:{{ size }}px;object-fit:contain;background:#ffffff;border:1px solid var(--card-border);border-radius:8px;padding:2px;">
+{% endmacro %}

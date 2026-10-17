@@ -1,7 +1,11 @@
 {% extends "base.html" %}
+{% from "_drone_thumb.html" import drone_thumb %}
 {% block title %}Drone {{ drone.msn }}{% endblock %}
 {% block content %}
 <div class="card">
+    <div style="display:flex;justify-content:center;margin-bottom:10px;">
+        {{ drone_thumb(drone.model, size=110) }}
+    </div>
     <h1 style="text-align:center;">Drone {{ drone.msn }}</h1>
     <h3 style="text-align:center;color:#64748b;">{{ drone.model }} &middot; {{ drone.department.name }}</h3>
     {% if own_only %}

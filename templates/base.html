@@ -14,7 +14,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Neosky Drone Diagnostic Platform{% endblock %}</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%B8%3C/text%3E%3C/svg%3E">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo-icon.png') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -113,9 +113,9 @@
         .sidenav .brand .logo-mark{
             display:inline-flex; align-items:center; justify-content:center;
             width:32px; height:32px; border-radius:10px; flex:0 0 32px;
-            background:linear-gradient(135deg,var(--accent),#38bdf8);
-            font-size:16px; box-shadow:var(--shadow-sm);
+            overflow:hidden; box-shadow:var(--shadow-sm);
         }
+        .sidenav .brand .logo-mark img{ width:100%; height:100%; object-fit:cover; display:block; }
         .sidenav .brand .brand-sub{
             display:block; font-weight:500; font-size:0.72em; color:#7c8aa3; margin-top:1px;
         }
@@ -311,7 +311,7 @@
 <div class="app-shell">
     <nav class="sidenav">
         <div class="brand">
-            <span class="logo-mark">🛸</span>
+            <span class="logo-mark"><img src="{{ url_for('static', filename='logo-icon.png') }}" alt="Neosky"></span>
             <span>
                 <span class="brand-text">Neosky</span>
                 <span class="brand-sub">Drone Log Analysis</span>

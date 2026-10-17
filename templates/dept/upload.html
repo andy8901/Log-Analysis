@@ -10,11 +10,14 @@
 
             <div class="input-group">
                 <label>Drone Model</label>
-                <select name="drone">
-                    {% for m in model_choices %}
-                    <option value="{{ m }}">{{ m }}</option>
-                    {% endfor %}
-                </select>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <select name="drone" id="droneModelSelect" onchange="updateDroneThumb(this.value)">
+                        {% for m in model_choices %}
+                        <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                    </select>
+                    <img id="droneModelThumb" alt="" style="width:40px;height:40px;object-fit:contain;background:#ffffff;border:1px solid var(--card-border);border-radius:8px;padding:2px;flex:0 0 40px;">
+                </div>
             </div>
 
             <div class="input-group">
@@ -52,4 +55,17 @@
         conflict with yours.
     </p>
 </div>
+<script>
+(function(){
+    const images = {
+        'Tavas': '{{ url_for("static", filename="drones/tavas.png") }}',
+        'Nimble': '{{ url_for("static", filename="drones/nimble.png") }}',
+    };
+    const fallback = '{{ url_for("static", filename="drones/generic.webp") }}';
+    window.updateDroneThumb = function(model){
+        document.getElementById('droneModelThumb').src = images[model] || fallback;
+    };
+    updateDroneThumb(document.getElementById('droneModelSelect').value);
+})();
+</script>
 {% endblock %}
