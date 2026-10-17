@@ -7,9 +7,16 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 # Loads a .env file in the project root into os.environ, if one exists --
 # regardless of which script starts the app (python wsgi.py, run_windows.bat,
 # gunicorn/waitress directly, ...) or which terminal/session it's run from.
-# override=False: a real environment variable already set in the shell
-# still wins, .env only fills in what isn't already there.
-load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
+#
+# override=True: .env always wins, even over a real environment variable
+# already set for the process (a leftover PowerShell `$env:`, or a
+# persistent Windows System/User variable from an earlier setup attempt).
+# This app is configured by editing .env, full stop -- a stray environment
+# variable silently out-voting a freshly-edited .env file (e.g. Drive sync
+# still writing to an old drive letter after .env was updated to a new one)
+# is exactly the confusing failure mode override=False allowed.
+_drive_sync_root_before_dotenv = os.environ.get("DRIVE_SYNC_ROOT")
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 
 class Config:
@@ -41,3 +48,13 @@ class Config:
     # Leave unset to disable entirely -- app/drive_sync.py no-ops when it's
     # missing rather than erroring.
     DRIVE_SYNC_ROOT = os.environ.get("DRIVE_SYNC_ROOT")
+
+    # True if some other environment variable (persistent OS var, or a
+    # leftover PowerShell $env: from an earlier terminal) had a *different*
+    # DRIVE_SYNC_ROOT value before .env was applied -- surfaced on the
+    # Admin Overview page so a "wrong drive letter" report is explainable
+    # at a glance instead of requiring a shell on the server to diagnose.
+    DRIVE_SYNC_ROOT_ENV_OVERRIDDEN = bool(
+        _drive_sync_root_before_dotenv and _drive_sync_root_before_dotenv != DRIVE_SYNC_ROOT
+    )
+    DRIVE_SYNC_ROOT_PRIOR_ENV_VALUE = _drive_sync_root_before_dotenv

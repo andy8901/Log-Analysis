@@ -4,11 +4,27 @@
 <div class="card">
     <h1 style="text-align:center;">Organization-Wide Overview</h1>
 
-    <div style="display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:24px;font-size:0.85em;color:var(--slate-500);">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:24px;font-size:0.85em;color:var(--text-muted);">
         <span style="display:inline-flex;align-items:center;gap:6px;">
-            <span style="width:8px;height:8px;border-radius:50%;background:{{ 'var(--good)' if drive_sync_root else 'var(--slate-300)' }};display:inline-block;"></span>
-            Drive sync: {{ drive_sync_root if drive_sync_root else 'not configured' }}
+            <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ 'var(--good)' if drive_sync.configured and drive_sync.exists else ('var(--warn)' if drive_sync.configured else 'var(--slate-300)') }};"></span>
+            {% if drive_sync.configured %}
+                Drive sync: {{ drive_sync.abs_path }}
+                {% if not drive_sync.exists %}<strong style="color:var(--warn);">&mdash; folder does not exist yet</strong>{% endif %}
+            {% else %}
+                Drive sync: not configured
+            {% endif %}
+            <form method="POST" action="{{ url_for('admin.drive_sync_test') }}" style="display:inline;">
+                <button class="btn secondary" type="submit" style="padding:4px 12px;font-size:0.85em;">Test Sync</button>
+            </form>
         </span>
+        {% if drive_sync.env_overridden %}
+        <span style="color:var(--warn);max-width:600px;text-align:center;">
+            Note: an existing environment variable had DRIVE_SYNC_ROOT set to
+            <code>{{ drive_sync.prior_env_value }}</code> &mdash; .env now takes priority and overrode it.
+            If this isn't the value you expect, check for a leftover PowerShell <code>$env:DRIVE_SYNC_ROOT</code>
+            or a persistent Windows System/User environment variable with that name and remove it.
+        </span>
+        {% endif %}
     </div>
 
     <div class="summary-grid">
