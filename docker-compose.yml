@@ -1,0 +1,52 @@
+# Self-hosted deployment for a real server (e.g. Oracle Cloud Always Free --
+# see README's "Deploying to a real server" section for the full runbook).
+# Runs this app behind Caddy, which gets you free, automatic HTTPS (Let's
+# Encrypt) just by pointing a domain's DNS at this machine -- no manual
+# certificate setup.
+#
+# Quickstart (full detail in the README):
+#   1. cp .env.example .env   and fill it in.
+#   2. Edit the Caddyfile: replace the placeholder domain with yours.
+#   3. If using Drive sync via rclone, run `rclone config` *on this
+#      machine* first (see README) so ~/.config/rclone/rclone.conf exists.
+#   4. docker compose up -d --build
+#   5. docker compose logs -f app   (watch it come up, check for errors)
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Overrides whatever's in .env for these three -- they must point
+      # inside the mounted volume below so data survives a redeploy.
+      - DATABASE_URL=sqlite:////app/data/app.db
+      - ARCHIVE_ROOT=/app/data/archive
+      - UPLOAD_TMP=/app/data/uploads
+    volumes:
+      - app-data:/app/data
+      # Only read if DRIVE_SYNC_RCLONE_REMOTE is set in .env -- rclone's
+      # config (including the Google account token from `rclone config`)
+      # lives on the host at ~/.config/rclone/rclone.conf; mounted
+      # read-only since the container never needs to change it.
+      - ${HOME}/.config/rclone:/root/.config/rclone:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  app-data:
+  caddy-data:
+  caddy-config:

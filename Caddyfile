@@ -1,0 +1,15 @@
+# Caddy automatically gets and renews a free HTTPS certificate (Let's
+# Encrypt) for whatever domain you put here, the first time it starts --
+# nothing else to configure. Replace the line below with your real domain
+# (it must already point at this server's IP in DNS before Caddy starts,
+# or the certificate request will fail).
+#
+# No domain yet? Use a free wildcard DNS service that resolves straight
+# to the IP in its own hostname, e.g. your server's IP 203.0.113.5 as
+# 203-0-113-5.nip.io -- no DNS setup needed, no account, works instantly.
+# Get HTTPS working today with that, swap in a real domain later without
+# changing anything else here.
+
+your-domain.example.com {
+	reverse_proxy app:8080
+}

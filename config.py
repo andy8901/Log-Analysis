@@ -45,9 +45,20 @@ class Config:
     # Drive API -- no service account/credentials needed). Point this at a
     # folder inside that app's synced location, e.g. on Windows:
     # "G:\My Drive\LogAnalysis" or "C:\Users\<you>\Google Drive\LogAnalysis".
-    # Leave unset to disable entirely -- app/drive_sync.py no-ops when it's
-    # missing rather than erroring.
+    # Windows/Mac office-PC deployments only -- Google Drive for Desktop has
+    # no Linux build, so this does nothing on a Linux server; use
+    # DRIVE_SYNC_RCLONE_REMOTE there instead. Leave both unset to disable
+    # Drive sync entirely -- app/drive_sync.py no-ops when neither is set
+    # rather than erroring.
     DRIVE_SYNC_ROOT = os.environ.get("DRIVE_SYNC_ROOT")
+
+    # Optional, and the one to use on a real server (Linux has no Google
+    # Drive for Desktop): an rclone remote:path, e.g. "gdrive:LogAnalysis".
+    # Install rclone and run `rclone config` once to connect a Google
+    # account (same no-API-project story as Drive for Desktop), then set
+    # this to "<the name you gave it>:<folder>". If both this and
+    # DRIVE_SYNC_ROOT are set, this one wins.
+    DRIVE_SYNC_RCLONE_REMOTE = os.environ.get("DRIVE_SYNC_RCLONE_REMOTE")
 
     # True if some other environment variable (persistent OS var, or a
     # leftover PowerShell $env: from an earlier terminal) had a *different*

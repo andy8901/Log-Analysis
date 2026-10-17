@@ -256,18 +256,146 @@ terminal on the server. If a stale environment variable was overriding
 your `.env` setting, that line also says so explicitly and names the old
 value that was in effect.
 
-## Deploying to the cloud
+### Drive sync on a real server (rclone, not Google Drive for Desktop)
 
-The app ships with a production `Dockerfile` (Gunicorn, binds to `PORT`,
-debug off) and a Render Blueprint (`render.yaml`).
+Google Drive for Desktop has no Linux build — it only works on the
+Windows/Mac office-PC setup above. For a Linux server (see **Deploying to
+a real server** below), use [rclone](https://rclone.org) instead, which
+has a real Linux client and talks to Drive the same credential-free way
+(your own Google account, no service account or Cloud Console project).
+The container image already has rclone installed; you only need to
+connect it to your Google account once:
 
-**This platform's primary data is now the database** (departments, users,
-drones, uploads, analysis results), not just the archived log files — so
-there's no usable "free tier with an ephemeral filesystem" option on
-Render/Railway/Fly.io. If cost matters and you want a real public server
-rather than hosting from an office PC, **Oracle Cloud's "Always Free"
-tier** gives a genuinely free-forever persistent VM (not a trial) that can
-run this with SQLite and the local archive, no monthly bill.
+1. On *any* machine with a browser (your laptop is fine — this doesn't
+   have to be the server), install rclone and run:
+   ```bash
+   rclone config
+   ```
+   Choose `n` (new remote), name it `gdrive`, pick `drive` (Google
+   Drive) from the storage list, leave client ID/secret blank (use
+   rclone's own), choose `1` (full access) for scope, leave the rest at
+   their defaults, and say yes to the browser-based auth flow — it opens
+   a normal Google sign-in/consent screen.
+2. This writes `~/.config/rclone/rclone.conf` (Linux/Mac) or
+   `%APPDATA%\rclone\rclone.conf` (Windows) on *that* machine. Copy its
+   contents to the server, at `~/.config/rclone/rclone.conf` for
+   whichever user runs `docker compose` (that's exactly the file
+   `docker-compose.yml` mounts into the container).
+3. Set `DRIVE_SYNC_RCLONE_REMOTE=gdrive:LogAnalysis` in `.env` on the
+   server (the part before the `:` must match the remote name you chose
+   in step 1) and restart (`docker compose up -d`).
+4. Verify with the same **Test Sync** button on Admin Overview described
+   above — it works identically for both mechanisms.
+
+If you did the Windows Drive-for-Desktop setup first and are now moving
+to a server, raw logs/reports already in that Drive folder don't need to
+move anywhere — Drive sync just mirrors *new* activity going forward,
+from wherever the app is now running.
+
+## Deploying to a real server
+
+The office-PC setup above works, but depends on that PC staying on and
+reachable. For something that doesn't depend on any one person's
+computer, run it on a small cloud VM instead — this section is a complete
+runbook for **Oracle Cloud's "Always Free" tier**, which gives a
+genuinely free-forever VM (not a trial, no credit card charge) with
+enough resources for this app comfortably.
+
+**Why Oracle specifically, not Render/Railway/Fly.io:** this platform's
+primary data is the database (departments, users, drones, uploads,
+analysis results) and the archived log files, not something stateless —
+so it needs a real persistent disk, and the major PaaS hosts' free tiers
+don't offer one (their free plans have an ephemeral filesystem that wipes
+on every deploy/restart). A real VM with its own disk sidesteps that
+entirely, and Oracle's free tier is the one that's actually free forever
+rather than a time-limited trial.
+
+### 1. Create the VM
+
+1. Sign up at [cloud.oracle.com](https://www.oracle.com/cloud/free/) (a
+   card is required for identity verification, but the Always Free
+   resources are never billed).
+2. Console → **Compute** → **Instances** → **Create instance**.
+3. Image: **Ubuntu** (22.04 or later). Shape: click "Change shape", pick
+   **Ampere (ARM)**, and size it **4 OCPUs / 24 GB RAM** — the whole
+   Ampere allocation (up to that size) is part of the Always Free tier,
+   not an upsell; this app runs comfortably within a fraction of it.
+4. Add your SSH public key (or let Oracle generate a key pair and
+   download it) — you'll need this to log in.
+5. Create the instance, note its public IP address.
+6. **Open the firewall**: Console → your instance → the attached **VCN**
+   → **Security Lists** → the default list → **Add Ingress Rules**: add
+   rules for TCP ports **80** and **443** from source `0.0.0.0/0` (the
+   VM's own OS firewall, `iptables`/`ufw`, usually allows these by
+   default on a fresh Ubuntu image, but the *cloud-level* security list
+   blocks them until you add this — both layers have to allow it).
+
+### 2. Set up the server
+
+SSH in (`ssh ubuntu@<the-ip>`), then:
+
+```bash
+# Docker + Compose plugin
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+# log out and back in for the group change to take effect, then:
+
+git clone https://github.com/andy8901/Log-Analysis.git
+cd Log-Analysis
+cp .env.example .env
+nano .env   # fill in SECRET_KEY, ADMIN_PASSWORD, and (optionally) DRIVE_SYNC_RCLONE_REMOTE
+nano Caddyfile   # replace your-domain.example.com with your real domain, or a *.nip.io address (see Caddyfile's own comments)
+```
+
+If using Drive sync, do the rclone setup above now, so
+`~/.config/rclone/rclone.conf` exists before the next step.
+
+```bash
+docker compose up -d --build
+docker compose logs -f app   # watch it start; Ctrl+C to stop watching (doesn't stop the app)
+```
+
+Open `https://<your-domain-or-nip.io-address>` — Caddy automatically
+requests and renews its HTTPS certificate on first request, no manual
+step.
+
+### 3. Migrate your existing data (optional)
+
+If you've been running this on a Windows PC and have real departments,
+users, uploads, or imported historical data you want to keep, copy both
+the database and the archived logs over **before** you start using the
+new server for real:
+
+On the Windows PC (stop the server first — copying a SQLite file that's
+being written to risks a corrupt copy):
+```powershell
+# From PowerShell, in the project folder
+scp instance\app.db ubuntu@<the-ip>:/tmp/app.db
+scp -r archive ubuntu@<the-ip>:/tmp/archive
+```
+(No `scp` on Windows? Use [WinSCP](https://winscp.net/) with the same
+source/destination instead.)
+
+On the server (do this *after* `docker compose up -d --build` has run at
+least once, so the `app-data` volume already exists):
+```bash
+cd ~/Log-Analysis
+docker compose down
+docker run --rm -v log-analysis_app-data:/data -v /tmp:/host alpine \
+  sh -c "mkdir -p /data/archive && cp /host/app.db /data/app.db && cp -r /host/archive/. /data/archive/"
+docker compose up -d
+```
+(`archive/.` with the trailing `/.` copies the *contents* of the archive
+folder into `/data/archive`, not a nested `archive/archive` — matters
+since `/data/archive` already exists from the app's own first startup.)
+
+Verify by logging in with your existing admin credentials and checking
+that departments/drones/uploads all show up as before.
+
+### Smaller/manual Docker deployment (no Caddy, no compose)
+
+If you'd rather run just the app container yourself (e.g. behind your
+own existing reverse proxy):
 
 ```bash
 docker build -t log-analysis .
@@ -279,6 +407,10 @@ docker run -p 8080:8080 \
   -e ARCHIVE_ROOT=/app/data/archive \
   log-analysis
 ```
+
+A Render Blueprint (`render.yaml`) is also included if you'd rather use
+a PaaS despite the persistent-disk cost tradeoff noted above — it builds
+and runs the same `Dockerfile`.
 
 ## Known limitation: synchronous processing
 
