@@ -45,7 +45,22 @@ reports by guessing an ID.
   Analyzer tool. Deliberately **not** something a department or individual
   account can trigger, and never a separate file upload of its own — it
   always runs over logs departments have *already* uploaded via Individual
-  Log Analysis, across every department at once.
+  Log Analysis, across every department at once. This extraction is now
+  also captured once at upload time (best-effort) and stored, so this
+  export and the richer dashboard metrics below don't need to re-parse
+  every raw log on every request.
+- **Conclusion required before download** — a report's Word/Excel/3D-video
+  downloads stay locked until someone records a root-cause conclusion
+  (Pilot error / System error / Yet to decide / Other, with an optional
+  note) on the report page. Anyone who can view the report can set or
+  change it; it's logged to the audit trail.
+- **Import Historical Data** (`/admin/import-raw-data`, admin-only) — lets
+  an admin backfill flights that only exist as an already-extracted
+  spreadsheet (the same Multilog-format export above, or the original
+  desktop tool's), for logs from before this platform existed or whose raw
+  file is gone. Each row becomes a flight that counts in every dashboard
+  aggregate exactly like a real upload, but has no raw log behind it, so no
+  3D replay or exports — it feeds the dashboards, not a full report page.
 
 ## Data model
 
@@ -68,6 +83,12 @@ records and never merged.
   Department Performance comparison (flights vs. anomalies), an Issue
   Severity breakdown, a Top Drones by Issues table, a Recent Anomalies
   feed, a takeoff-location map, and the per-department breakdown table.
+  Also: average range from home (farthest GPS point reached), average
+  battery voltage at the moment a battery failsafe triggered, and counts of
+  flights with a potential thrust-loss event or a GPS issue (signal loss,
+  low satellite count, poor HDOP, a position glitch) — these four read the
+  richer Multilog-format field set (see Analysis above), so they only
+  reflect flights that have it captured.
 - **Fleet & Drones** (`/admin/drones`) — every drone across every
   department, with aggregates: total logs/flights, avg flight time, avg
   battery sag % (voltage drop across a flight), avg distance flown (summed
@@ -117,8 +138,13 @@ then log in and start uploading logs.
 
 **Note on upgrading from an older checkout:** the schema has changed across
 versions (e.g. `AnalysisResult` gained denormalized metric columns). There's
-no migration tool (Alembic) wired up yet — delete `instance/app.db` and let
-it re-bootstrap rather than running against an old schema.
+no migration tool (Alembic) wired up, but `app/__init__.py` runs a small
+automatic migration on every startup that adds any column a model has
+gained since the database was created (nullable, additive only — it never
+drops or renames anything) — a plain `git pull` + restart picks up schema
+changes without losing existing data. This only handles *new columns*,
+not a changed column's type or a renamed/removed one; if a future change
+needs that, this note will say so.
 
 ## Running it for your whole organization on Windows
 

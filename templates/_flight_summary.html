@@ -50,7 +50,18 @@
     <div class="metric-card"><h4>Avg Altitude</h4><h2>{{ flight_summary.avg_altitude_m if flight_summary.avg_altitude_m is not none else '—' }}<small> m</small></h2></div>
     <div class="metric-card"><h4>Avg Battery Voltage</h4><h2>{{ flight_summary.avg_battery_voltage_v if flight_summary.avg_battery_voltage_v is not none else '—' }}<small> V</small></h2></div>
     <div class="metric-card"><h4>Avg Current</h4><h2>{{ flight_summary.avg_current_a if flight_summary.avg_current_a is not none else '—' }}<small> A</small></h2></div>
+    <div class="metric-card"><h4>Avg Range From Home</h4><h2>{{ ml_stats.avg_max_range_m if ml_stats.avg_max_range_m is not none else '—' }}<small> m</small></h2></div>
+    <div class="metric-card"><h4>Avg Battery at Failsafe</h4><h2>{{ ml_stats.avg_battery_voltage_at_failsafe_v if ml_stats.avg_battery_voltage_at_failsafe_v is not none else '—' }}<small> V</small></h2><small>{{ ml_stats.battery_failsafe_flights }} flight(s)</small></div>
+    <div class="metric-card" style="{{ 'background:#92400e;' if ml_stats.thrust_issue_flights }}"><h4>Potential Thrust Issues</h4><h2>{{ ml_stats.thrust_issue_flights }}</h2></div>
+    <div class="metric-card" style="{{ 'background:#92400e;' if ml_stats.gps_issue_flights }}"><h4>GPS Issues</h4><h2>{{ ml_stats.gps_issue_flights }}</h2></div>
 </div>
+{% if ml_stats.scored_flights == 0 %}
+<p style="color:var(--text-muted);font-size:0.85em;margin-top:-16px;">
+    Range/failsafe/thrust/GPS metrics need the richer per-field extraction, captured for uploads from here on
+    {% if current_user.is_admin %}(or backfilled via Multilog Analysis &rarr; Import Historical Data){% endif %} &mdash;
+    none of the flights in this view have it yet.
+</p>
+{% endif %}
 
 <div class="viz-root">
     <div class="analytics-grid {{ 'viz-row-3' if dept_chart else 'viz-row-2' }}">

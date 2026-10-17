@@ -1,5 +1,7 @@
+import json
 import os
 import tempfile
+from datetime import datetime, timezone
 
 import pandas as pd
 from flask import Blueprint, current_app, flash, redirect, render_template, request, send_file, url_for
@@ -9,12 +11,12 @@ from app import db
 from app.decorators import admin_required
 from app.drive_sync import diagnostics as drive_sync_diagnostics
 from app.drive_sync import test_write as drive_sync_test_write
-from app.models import AuditLog, Department, Drone, Upload, User, slugify
+from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
 from app.stats import (
     active_drone_trend, drone_aggregate, flight_summary_aggregate,
-    daily_flight_trend, issue_severity_breakdown, person_aggregate,
-    recent_anomalies, today_start, top_drones_from_uploads, trend_pct,
-    period_window_counts, ytd_start,
+    daily_flight_trend, issue_severity_breakdown, multilog_aggregate,
+    person_aggregate, recent_anomalies, today_start, top_drones_from_uploads,
+    trend_pct, period_window_counts, ytd_start,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -88,6 +90,7 @@ def dashboard():
     severity = issue_severity_breakdown(all_completed_uploads)
     anomalies = recent_anomalies(all_completed_uploads, limit=6)
     top_drones = top_drones_from_uploads(all_uploads, limit=5, include_department=True)
+    ml_stats = multilog_aggregate(all_completed_uploads)
 
     dept_chart = [
         {"name": row["department"].name, "flights": row["completed"], "anomalies": row["critical"] + row["warning"]}
@@ -98,7 +101,7 @@ def dashboard():
         "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
         flight_summary=flight_summary, daily_trend=daily_trend,
         severity=severity, anomalies=anomalies, top_drones=top_drones,
-        dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
+        ml_stats=ml_stats, dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
     )
 
 
@@ -148,15 +151,19 @@ def all_people():
 @admin_bp.route("/export/raw-data.xlsx")
 def export_raw_data():
     """Multilog Analysis, admin-only: one flat Excel, one row per log
-    across every department, using the full ~150-field extraction (the
-    same per-log analysis as the standalone desktop Multilog tool), with
-    Department Name prepended. Deliberately not something a department or
-    individual account can trigger -- it always runs over data departments
-    have *already* uploaded via Individual Log Analysis, never a fresh
-    file upload of its own. The raw archived log for each completed
-    upload is re-parsed with multilog_analyzer.analyze_single_log() to
-    get this field set (not stored at upload time -- only derived there
-    for the three dashboard metrics -- so it's computed fresh here)."""
+    across every department (real uploads and admin-imported historical
+    rows alike), using the full ~150-field extraction (the same per-log
+    analysis as the standalone desktop Multilog tool), with Department Name
+    prepended. Deliberately not something a department or individual
+    account can trigger -- it always runs over data departments have
+    *already* uploaded via Individual Log Analysis (or an admin imported),
+    never a fresh file upload of its own.
+
+    Prefers each upload's stored AnalysisResult.multilog_json (captured
+    once at upload time, or verbatim for an imported row) over re-parsing
+    the raw archived log -- faster, and still correct for a row whose raw
+    log was since moved/deleted. Only falls back to a live re-parse for a
+    pre-existing upload from before multilog_json was captured."""
     from multilog_analyzer import analyze_single_log
 
     rows = []
@@ -168,13 +175,20 @@ def export_raw_data():
         .all()
     )
     for u in uploads:
-        if not u.archived_path or not os.path.exists(u.archived_path):
-            skipped.append(f"upload {u.id}: raw log no longer on disk")
+        if not u.analysis:
+            skipped.append(f"upload {u.id}: no analysis")
             continue
-        result = analyze_single_log(u.archived_path)
-        if "_error" in result:
-            skipped.append(f"upload {u.id} ({u.original_filename}): {result['_error']}")
-            continue
+
+        result = u.analysis.get_multilog()
+        if result is None:
+            if not u.archived_path or not os.path.exists(u.archived_path):
+                skipped.append(f"upload {u.id}: raw log no longer on disk")
+                continue
+            result = analyze_single_log(u.archived_path)
+            if "_error" in result:
+                skipped.append(f"upload {u.id} ({u.original_filename}): {result['_error']}")
+                continue
+
         rows.append({"Department Name": u.department.name, **result})
 
     df = pd.DataFrame(rows)
@@ -195,6 +209,223 @@ def export_raw_data():
             os.remove(tmp_path)
         except OSError:
             pass
+
+
+_IMPORT_COLUMN_ALIASES = {
+    "msn": ("MSN", "Drone MSN", "Serial Number", "Serial No", "Serial"),
+    "model": ("Drone Model", "Model"),
+    "department": ("Department Name", "Department"),
+    "reported_by": ("Reported By", "Reporter"),
+    "flight_date": ("Flight Date", "Date"),
+    "filename": ("Log Name", "Filename", "File Name"),
+}
+
+
+def _find_import_column(columns, field):
+    lower_map = {str(c).strip().lower(): c for c in columns}
+    for alias in _IMPORT_COLUMN_ALIASES[field]:
+        if alias.lower() in lower_map:
+            return lower_map[alias.lower()]
+    return None
+
+
+def _import_num(value):
+    try:
+        if value is None:
+            return None
+        f = float(value)
+        return None if f != f else f  # NaN != NaN
+    except (TypeError, ValueError):
+        return None
+
+
+def _import_text(row, *keys):
+    for k in keys:
+        v = row.get(k)
+        if v is not None and str(v).strip().lower() not in ("", "nan", "none"):
+            return str(v).strip()
+    return None
+
+
+def _build_imported_report(row):
+    """Reshapes one Multilog-format Excel row into the same minimal shape
+    the rest of the app reads off a report dict (summary/alerts/status) --
+    there's no raw log behind an imported row, so no charts/gps_path/
+    timeline, only what the row itself carries."""
+    summary = {
+        "flight_duration": _import_num(row.get("Flight Time (min)")),
+        "max_range_m": _import_num(row.get("Max Home Distance (m)")),
+        "home_lat": _import_num(row.get("Takeoff Latitude")),
+        "home_lon": _import_num(row.get("Takeoff Longitude")),
+        "initial_voltage": _import_num(row.get("Max Voltage (V)")),
+        "final_voltage": _import_num(row.get("Min Voltage (V)")),
+    }
+
+    alerts = []
+    for col in ("Critical Messages", "Error Messages", "Warning Messages"):
+        text = _import_text(row, col)
+        if text:
+            alerts.append(f"{col.upper()}: {text}")
+    thrust = _import_text(row, "Potential Thrust Loss")
+    if thrust:
+        alerts.append(f"POTENTIAL THRUST LOSS: {thrust}")
+
+    battery_failsafe = str(row.get("Battery Failsafe", "No")).strip().lower() == "yes"
+    failsafe_count = _import_num(row.get("Failsafe Event Count")) or 0
+    if battery_failsafe or failsafe_count > 0:
+        status = "CRITICAL"
+    elif alerts:
+        status = "WARNING"
+    else:
+        status = "PASS"
+
+    report = {
+        "status": status, "alerts": alerts, "summary": summary,
+        "charts": {}, "gps_path": [], "gps_path_time": [], "timeline": [],
+    }
+
+    max_v, min_v = _import_num(row.get("Max Voltage (V)")), _import_num(row.get("Min Voltage (V)"))
+    battery_sag_pct = round((max_v - min_v) / max_v * 100, 2) if max_v else None
+
+    metrics = {
+        "flight_duration_min": _import_num(row.get("Flight Time (min)")),
+        "battery_sag_pct": battery_sag_pct,
+        "distance_travelled_m": _import_num(row.get("Distance Travelled (m)")),
+        "avg_altitude_m": _import_num(row.get("Avg Baro Alt (m)")) or _import_num(row.get("Avg GPS Alt (m)")),
+        "avg_battery_voltage_v": _import_num(row.get("Avg Voltage (V)")),
+        "avg_current_a": _import_num(row.get("Avg Current (A)")),
+    }
+    return report, metrics
+
+
+@admin_bp.route("/import-raw-data", methods=["GET", "POST"])
+def import_raw_data():
+    """Lets an admin backfill historical flights that only exist as an
+    already-extracted Excel (the same Multilog-format export this app's
+    own Export Raw Data produces) -- e.g. logs from before this platform
+    existed, or whose raw .bin is gone. Each row becomes an Upload +
+    AnalysisResult with source="imported": no raw log, no 3D replay, but
+    it counts in every dashboard aggregate exactly like a real upload,
+    since those all read AnalysisResult the same way regardless of origin.
+
+    Column matching is best-effort and case-insensitive (see
+    _IMPORT_COLUMN_ALIASES): MSN is required per row (the file's own
+    column, if present) -- a row with no resolvable MSN is skipped, never
+    guessed. Department comes from the file's own column when present,
+    otherwise every row uses the department selected on this form."""
+    departments = Department.query.order_by(Department.name).all()
+
+    if request.method == "GET":
+        return render_template("admin/import_raw_data.html", departments=departments)
+
+    file = request.files.get("data_file")
+    fallback_dept_id = request.form.get("department_id", type=int)
+
+    if not file or not file.filename:
+        flash("No file selected", "error")
+        return redirect(url_for("admin.import_raw_data"))
+
+    try:
+        df = pd.read_excel(file, engine="openpyxl")
+    except Exception as exc:
+        flash(f"Could not read that file as an Excel sheet: {exc}", "error")
+        return redirect(url_for("admin.import_raw_data"))
+
+    columns = list(df.columns)
+    msn_col = _find_import_column(columns, "msn")
+    if msn_col is None:
+        flash(
+            "No MSN column found (looked for: MSN, Drone MSN, Serial Number, "
+            "Serial No, Serial) -- add one so each row can be matched to a drone.",
+            "error",
+        )
+        return redirect(url_for("admin.import_raw_data"))
+
+    model_col = _find_import_column(columns, "model")
+    dept_col = _find_import_column(columns, "department")
+    reported_col = _find_import_column(columns, "reported_by")
+    date_col = _find_import_column(columns, "flight_date")
+    filename_col = _find_import_column(columns, "filename")
+
+    dept_by_name = {d.name.strip().lower(): d for d in departments}
+    fallback_dept = next((d for d in departments if d.id == fallback_dept_id), None)
+
+    imported = 0
+    skipped = []
+
+    for i, row in df.iterrows():
+        row = row.to_dict()
+        msn = _import_text(row, msn_col)
+        if not msn:
+            skipped.append(f"row {i + 2}: no MSN")
+            continue
+
+        department = fallback_dept
+        if dept_col:
+            name = _import_text(row, dept_col)
+            if name:
+                department = dept_by_name.get(name.strip().lower())
+                if department is None:
+                    skipped.append(f"row {i + 2}: unknown department '{name}'")
+                    continue
+        if department is None:
+            skipped.append(f"row {i + 2}: no department (select one on the form, or add a Department column)")
+            continue
+
+        drone = Drone.query.filter_by(msn=msn, department_id=department.id).first()
+        if drone is None:
+            model = _import_text(row, model_col) or "UNKNOWN"
+            drone = Drone(msn=msn, model=model, department_id=department.id)
+            db.session.add(drone)
+            db.session.flush()
+
+        flight_date = _import_text(row, date_col)
+        filename = _import_text(row, filename_col) or f"imported_row_{i + 2}"
+
+        upload_row = Upload(
+            department_id=department.id,
+            user_id=current_user.id,
+            drone_id=drone.id,
+            original_filename=filename,
+            drone_model=drone.model,
+            msn_entered=msn,
+            flight_date=flight_date,
+            reported_by=_import_text(row, reported_col),
+            status="completed",
+            source="imported",
+            analyzed_at=datetime.now(timezone.utc),
+        )
+        db.session.add(upload_row)
+        db.session.flush()
+
+        report, metrics = _build_imported_report(row)
+        analysis = AnalysisResult(
+            upload_id=upload_row.id,
+            report_status=report["status"],
+            alert_count=len(report["alerts"]),
+            top_alerts=json.dumps(report["alerts"][:5]),
+            report_json=json.dumps(report),
+            multilog_json=json.dumps(row, default=str),
+            **metrics,
+        )
+        db.session.add(analysis)
+        imported += 1
+
+    AuditLog.record(
+        current_user, "import_raw_data",
+        f"{imported} row(s) imported, {len(skipped)} skipped",
+    )
+    db.session.commit()
+
+    if imported:
+        flash(f"Imported {imported} historical flight(s).", "success")
+    if skipped:
+        preview = "; ".join(skipped[:10]) + (f" (+{len(skipped) - 10} more)" if len(skipped) > 10 else "")
+        flash(f"Skipped {len(skipped)} row(s): {preview}", "error")
+    if not imported and not skipped:
+        flash("The file had no rows to import.", "error")
+
+    return redirect(url_for("admin.import_raw_data"))
 
 
 # ---- Departments -----------------------------------------------------

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Import Historical Data{% endblock %}
+{% block content %}
+<div class="card" style="max-width:720px;margin:0 auto;">
+    <h1>Import Historical Data</h1>
+    <p style="color:var(--text-body);">
+        Backfill flights that only exist as an already-extracted spreadsheet
+        &mdash; the same ~150-column format this app's own
+        <a href="{{ url_for('admin.export_raw_data') }}">Export Raw Data</a>
+        produces, or your original desktop Multilog tool's export. Each row
+        becomes a flight that counts in every dashboard (totals, trends,
+        range, battery-at-failsafe, thrust/GPS issue counts) exactly like a
+        real upload. There's no raw log behind it, so it has no 3D replay
+        and no Word/Excel/video export &mdash; it's data for the dashboards,
+        not a full report.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data">
+        <div class="input-group">
+            <label>Spreadsheet (.xlsx)</label>
+            <input type="file" name="data_file" accept=".xlsx" required>
+        </div>
+
+        <div class="input-group">
+            <label>Department (used when the file has no Department column)</label>
+            <select name="department_id">
+                <option value="">— select —</option>
+                {% for d in departments %}
+                <option value="{{ d.id }}">{{ d.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <button class="btn" type="submit">Import</button>
+    </form>
+
+    <h3 style="margin-top:28px;">Columns it looks for</h3>
+    <p style="color:var(--text-muted);font-size:0.9em;">
+        Matching is case-insensitive; a missing optional column just falls
+        back as noted.
+    </p>
+    <table>
+        <thead><tr><th>Field</th><th>Column names it accepts</th><th>Required?</th></tr></thead>
+        <tbody>
+            <tr><td>MSN</td><td>MSN, Drone MSN, Serial Number, Serial No, Serial</td><td>Yes &mdash; a row without one is skipped</td></tr>
+            <tr><td>Department</td><td>Department Name, Department</td><td>No &mdash; falls back to the dropdown above</td></tr>
+            <tr><td>Drone Model</td><td>Drone Model, Model</td><td>No &mdash; defaults to "UNKNOWN"</td></tr>
+            <tr><td>Flight Date</td><td>Flight Date, Date</td><td>No</td></tr>
+            <tr><td>Reported By</td><td>Reported By, Reporter</td><td>No</td></tr>
+            <tr><td>Log Name</td><td>Log Name, Filename, File Name</td><td>No</td></tr>
+        </tbody>
+    </table>
+    <p style="color:var(--text-muted);font-size:0.9em;">
+        All other recognized Multilog columns (Max Home Distance (m), Battery
+        Failsafe, Min/Max Voltage (V), Potential Thrust Loss, GPS Glitch
+        Count, Distance Travelled (m), Flight Time (min), Avg Baro/GPS Alt
+        (m), Avg Current (A), ...) are read directly by column name &mdash;
+        keep the original Multilog headers for those.
+    </p>
+</div>
+{% endblock %}

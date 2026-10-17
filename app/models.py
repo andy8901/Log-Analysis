@@ -110,19 +110,49 @@ class Upload(db.Model):
     # queued -> processing -> completed | failed
     error_message = db.Column(db.Text, nullable=True)
 
+    # "upload" (a real .bin/.log/.tlog processed by analyzer.py, the normal
+    # path) or "imported" (a row backfilled by an admin from a historical
+    # Multilog-format Excel export -- see routes_admin.import_raw_data()).
+    # Imported rows have no raw log and no analyzer.py report, so the UI
+    # hides report/3D/export actions that need one.
+    source = db.Column(db.String(20), nullable=False, default="upload")
+
+    # Root-cause conclusion, required before downloads (Word/Excel/3D video)
+    # unlock on the report page -- CONCLUSION_CHOICES below is the fixed
+    # set; "other" pairs with conclusion_note for free text.
+    conclusion = db.Column(db.String(20), nullable=True)
+    conclusion_note = db.Column(db.Text, nullable=True)
+    concluded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    concluded_at = db.Column(db.DateTime, nullable=True)
+
     uploaded_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     analyzed_at = db.Column(db.DateTime, nullable=True)
 
     department = db.relationship("Department")
-    user = db.relationship("User")
+    user = db.relationship("User", foreign_keys=[user_id])
     drone = db.relationship("Drone", back_populates="uploads")
+    concluded_by = db.relationship("User", foreign_keys=[concluded_by_id])
     analysis = db.relationship(
         "AnalysisResult", back_populates="upload", uselist=False,
         cascade="all, delete-orphan",
     )
 
+    @property
+    def has_conclusion(self):
+        return self.conclusion is not None
+
     def __repr__(self):
         return f"<Upload {self.id} {self.original_filename} [{self.status}]>"
+
+
+# Fixed set of root-cause conclusions a report can be closed out with,
+# required before its downloads unlock -- (value, label).
+CONCLUSION_CHOICES = (
+    ("pilot_error", "Pilot error"),
+    ("system_error", "System error"),
+    ("undetermined", "Yet to decide"),
+    ("other", "Other"),
+)
 
 
 class AnalysisResult(db.Model):
@@ -147,6 +177,17 @@ class AnalysisResult(db.Model):
     avg_battery_voltage_v = db.Column(db.Float, nullable=True)
     avg_current_a = db.Column(db.Float, nullable=True)
 
+    # The same ~150-field extraction multilog_analyzer.analyze_single_log()
+    # produces for the admin Multilog Analysis export -- captured once here
+    # at upload time (best-effort; stays null if extraction fails) so the
+    # richer per-field dashboard metrics (range from home, battery voltage
+    # at a failsafe trigger, thrust/GPS issue counts -- fields that live
+    # here, not in process_log()'s own report) don't require re-parsing the
+    # raw log on every dashboard load. For an admin-imported historical row
+    # (Upload.source == "imported"), this *is* the row's data verbatim --
+    # there's no separate process_log() report behind it.
+    multilog_json = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     upload = db.relationship("Upload", back_populates="analysis")
@@ -156,6 +197,9 @@ class AnalysisResult(db.Model):
 
     def get_top_alerts(self):
         return json.loads(self.top_alerts) if self.top_alerts else []
+
+    def get_multilog(self):
+        return json.loads(self.multilog_json) if self.multilog_json else None
 
 
 class AuditLog(db.Model):

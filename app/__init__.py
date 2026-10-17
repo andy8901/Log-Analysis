@@ -3,7 +3,7 @@ import os
 from flask import Flask, jsonify
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from config import Config
 
@@ -63,9 +63,36 @@ def create_app(config_object=Config):
 
     with app.app_context():
         db.create_all()
+        _migrate_add_missing_columns(app)
         _bootstrap_admin(app)
 
     return app
+
+
+def _migrate_add_missing_columns(app):
+    """db.create_all() only creates tables that don't exist yet -- it never
+    alters an existing table, so a model gaining a new column (as happens
+    whenever this app's data model grows) would otherwise need the whole
+    database deleted and re-bootstrapped. There's no Alembic wired up here,
+    so this does the one thing that actually matters for a SQLite column
+    addition: ALTER TABLE ... ADD COLUMN, run once per missing column,
+    skipped entirely once every column already exists. Safe by
+    construction -- every column this adds is nullable, so existing rows
+    just get NULL there; nothing here ever drops or renames a column."""
+    inspector = inspect(db.engine)
+    for table in db.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue
+        existing_columns = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing_columns:
+                continue
+            col_type = column.type.compile(dialect=db.engine.dialect)
+            app.logger.warning(
+                "Migrating: adding column %s.%s (%s)", table.name, column.name, col_type
+            )
+            with db.engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'))
 
 
 def _bootstrap_admin(app):
