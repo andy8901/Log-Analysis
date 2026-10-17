@@ -18,11 +18,11 @@ from app import db
 from app.decorators import department_required
 from app.drive_sync import upload_to_drive
 from app.flight3d import build_track
-from app.models import AnalysisResult, AuditLog, Department, Drone, Upload
+from app.models import AnalysisResult, AuditLog, CONCLUSION_CHOICES, Department, Drone, Upload
 from app.stats import (
     anomaly_type_breakdown, daily_flight_trend, derive_result_metrics,
-    drone_flight_series, flight_summary_aggregate, period_window_counts,
-    recent_anomalies, top_drones_from_uploads, trend_pct,
+    drone_flight_series, flight_summary_aggregate, multilog_aggregate,
+    period_window_counts, recent_anomalies, top_drones_from_uploads, trend_pct,
 )
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
 
@@ -104,6 +104,7 @@ def dashboard():
     anomaly_types = anomaly_type_breakdown(scoped_completed)
     anomalies = recent_anomalies(scoped_completed, limit=6)
     top_drones = top_drones_from_uploads(scoped_uploads, limit=5)
+    ml_stats = multilog_aggregate(scoped_completed)
 
     uploads_cur, uploads_prev = period_window_counts(scoped_uploads, days=7)
     flights_cur, flights_prev = period_window_counts(scoped_completed, days=7)
@@ -122,6 +123,7 @@ def dashboard():
         anomaly_types=anomaly_types,
         anomalies=anomalies,
         top_drones=top_drones,
+        ml_stats=ml_stats,
         trends=trends,
         model_choices=DRONE_MODEL_CHOICES,
         filters={"msn": msn, "model": model, "status": status},
@@ -215,6 +217,7 @@ def upload():
         alert_count=len(report.get("alerts") or []),
         top_alerts=json.dumps((report.get("alerts") or [])[:5]),
         report_json=json.dumps(report),
+        multilog_json=_extract_multilog_json(archived_path, upload_row.id),
         **derive_result_metrics(report),
     )
     db.session.add(analysis)
@@ -225,6 +228,31 @@ def upload():
     _sync_reports_to_drive(upload_row, report, department, drone)
 
     return redirect(url_for("dept.view_report", upload_id=upload_row.id))
+
+
+def _extract_multilog_json(archived_path, upload_id):
+    """Best-effort: runs the same ~150-field extraction the admin Multilog
+    Analysis export uses (multilog_analyzer.analyze_single_log(), untouched
+    analysis logic) once at upload time, so the richer dashboard metrics
+    that live only in that field set (range from home, battery voltage at
+    a failsafe trigger, thrust/GPS issue counts) are available without
+    re-parsing the raw log later. Never blocks or fails the upload -- on
+    any error this just leaves multilog_json unset, same as Drive sync."""
+    from multilog_analyzer import analyze_single_log
+
+    try:
+        result = analyze_single_log(archived_path)
+        if "_error" in result:
+            current_app.logger.warning(
+                "multilog extraction skipped for upload %s: %s", upload_id, result["_error"]
+            )
+            return None
+        return json.dumps(result)
+    except Exception:
+        current_app.logger.warning(
+            "multilog extraction failed for upload %s", upload_id, exc_info=True
+        )
+        return None
 
 
 def _sync_reports_to_drive(upload_row, report, department, drone):
@@ -285,12 +313,48 @@ def view_report(upload_id):
         flash("This upload has no completed analysis yet.", "error")
         return redirect(url_for("dept.dashboard", department_id=upload_row.department_id))
 
+    if upload_row.source == "imported":
+        flash(
+            "This is backfilled historical data with no raw log behind it -- "
+            "it feeds the dashboard aggregates, but there's no full report to view here.",
+            "error",
+        )
+        return redirect(url_for("dept.dashboard", department_id=upload_row.department_id))
+
     report = upload_row.analysis.get_report()
     track, track_meta = build_track(report)
     return render_template(
         "dept/report_view.html", upload=upload_row, report=report,
-        track=track, track_meta=track_meta,
+        track=track, track_meta=track_meta, conclusion_choices=CONCLUSION_CHOICES,
     )
+
+
+@dept_bp.route("/reports/<int:upload_id>/conclusion", methods=["POST"])
+@login_required
+@department_required
+def set_conclusion(upload_id):
+    upload_row = _get_upload_scoped(upload_id)
+
+    if not upload_row.analysis:
+        abort(404)
+
+    value = request.form.get("conclusion", "").strip()
+    note = request.form.get("conclusion_note", "").strip()
+    valid_values = {v for v, _ in CONCLUSION_CHOICES}
+
+    if value not in valid_values:
+        flash("Choose a conclusion before continuing.", "error")
+        return redirect(url_for("dept.view_report", upload_id=upload_id))
+
+    upload_row.conclusion = value
+    upload_row.conclusion_note = note or None
+    upload_row.concluded_by_id = current_user.id
+    upload_row.concluded_at = datetime.now(timezone.utc)
+    AuditLog.record(current_user, "set_conclusion", f"upload={upload_id} conclusion={value}")
+    db.session.commit()
+
+    flash("Conclusion recorded -- downloads are now available.", "success")
+    return redirect(url_for("dept.view_report", upload_id=upload_id))
 
 
 @dept_bp.route("/export/<int:upload_id>/<fmt>")
@@ -299,8 +363,12 @@ def view_report(upload_id):
 def export(upload_id, fmt):
     upload_row = _get_upload_scoped(upload_id)
 
-    if not upload_row.analysis:
+    if not upload_row.analysis or upload_row.source == "imported":
         abort(404)
+
+    if not upload_row.has_conclusion:
+        flash("Record a conclusion (Pilot error / System error / Yet to decide) before downloading.", "error")
+        return redirect(url_for("dept.view_report", upload_id=upload_id))
 
     report = upload_row.analysis.get_report()
     ext = "docx" if fmt == "word" else "xlsx"
@@ -340,8 +408,12 @@ def export_video(upload_id):
 
     upload_row = _get_upload_scoped(upload_id)
 
-    if not upload_row.analysis:
+    if not upload_row.analysis or upload_row.source == "imported":
         abort(404)
+
+    if not upload_row.has_conclusion:
+        flash("Record a conclusion (Pilot error / System error / Yet to decide) before downloading.", "error")
+        return redirect(url_for("dept.view_report", upload_id=upload_id))
 
     report = upload_row.analysis.get_report()
 

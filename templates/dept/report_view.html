@@ -232,13 +232,59 @@
 
     <br>
 
-    <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='word') }}">
-        <button class="btn">Download Word</button>
-    </a>
+    {% set conclusion_labels = dict(conclusion_choices) %}
+    <div style="background:var(--card-bg);border:1px solid var(--card-border);border-radius:14px;padding:22px;margin:20px 0;">
+        <h3 style="margin-top:0;">Conclusion</h3>
 
-    <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='xlsx') }}">
-        <button class="btn">Download Excel</button>
-    </a>
+        {% if upload.has_conclusion %}
+        <p style="margin:0 0 4px;">
+            <span class="badge" style="background:var(--accent);">{{ conclusion_labels.get(upload.conclusion, upload.conclusion) }}</span>
+            <span style="color:var(--text-muted);font-size:0.9em;">
+                &mdash; recorded by {{ upload.concluded_by.full_name if upload.concluded_by else 'unknown' }}
+                on {{ upload.concluded_at.strftime('%Y-%m-%d %H:%M') if upload.concluded_at else '' }}
+            </span>
+        </p>
+        {% if upload.conclusion_note %}
+        <p style="color:var(--text-body);font-style:italic;">&ldquo;{{ upload.conclusion_note }}&rdquo;</p>
+        {% endif %}
+
+        <details style="margin-top:10px;">
+            <summary style="cursor:pointer;color:var(--text-muted);font-size:0.9em;">Change conclusion</summary>
+            <form method="POST" action="{{ url_for('dept.set_conclusion', upload_id=upload.id) }}" style="margin-top:12px;">
+                {% for value, label in conclusion_choices %}
+                <label style="display:block;margin-bottom:8px;cursor:pointer;">
+                    <input type="radio" name="conclusion" value="{{ value }}" {{ 'checked' if upload.conclusion == value }} required> {{ label }}
+                </label>
+                {% endfor %}
+                <textarea name="conclusion_note" placeholder="Optional note (required detail for 'Other')" style="width:100%;min-height:70px;margin:10px 0;padding:10px;border-radius:8px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--text-strong);">{{ upload.conclusion_note or '' }}</textarea>
+                <button class="btn" type="submit">Update Conclusion</button>
+            </form>
+        </details>
+
+        <div style="margin-top:16px;">
+            <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='word') }}">
+                <button class="btn">Download Word</button>
+            </a>
+            <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='xlsx') }}">
+                <button class="btn">Download Excel</button>
+            </a>
+        </div>
+
+        {% else %}
+        <p style="color:var(--text-body);">
+            Record a root-cause conclusion before the Word/Excel/3D video downloads unlock.
+        </p>
+        <form method="POST" action="{{ url_for('dept.set_conclusion', upload_id=upload.id) }}">
+            {% for value, label in conclusion_choices %}
+            <label style="display:block;margin-bottom:8px;cursor:pointer;">
+                <input type="radio" name="conclusion" value="{{ value }}" required> {{ label }}
+            </label>
+            {% endfor %}
+            <textarea name="conclusion_note" placeholder="Optional note (add detail, especially for 'Other')" style="width:100%;min-height:70px;margin:10px 0;padding:10px;border-radius:8px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--text-strong);"></textarea>
+            <button class="btn" type="submit">Save Conclusion &amp; Unlock Downloads</button>
+        </form>
+        {% endif %}
+    </div>
 
     <a href="{{ url_for('dept.dashboard', department_id=upload.department_id) }}">
         <button class="btn secondary">Back to Dashboard</button>
@@ -358,9 +404,13 @@
                 <option value="5">5x</option>
             </select>
         </label>
+        {% if upload.has_conclusion %}
         <a href="{{ url_for('dept.export_video', upload_id=upload.id) }}">
             <button class="btn" type="button">Download 3D Video (MP4)</button>
         </a>
+        {% else %}
+        <button class="btn secondary" type="button" disabled title="Record a conclusion above to unlock downloads">Download 3D Video (MP4) &mdash; record a conclusion first</button>
+        {% endif %}
     </div>
 
     <div id="scene3d" style="height:500px;border-radius:20px;background:#0f172a;"></div>
@@ -550,6 +600,14 @@ if(charts.attitude_pitch && charts.attitude_pitch.t && charts.attitude_pitch.t.l
 
 </script>
 
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@latest/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@latest/examples/jsm/"
+    }
+}
+</script>
 <script type="module">
 // ---- 3D flight path + attitude replay (Three.js) ----------------------
 // Axis convention matches app/flight3d.py: x=east, y=altitude(up), z=north.
@@ -562,6 +620,16 @@ if(charts.attitude_pitch && charts.attitude_pitch.t && charts.attitude_pitch.t.l
 // UMD build and examples/js/ (non-module) scripts in recent releases, so
 // this has to be loaded as real ES modules; "@latest" (no pinned version)
 // avoids 404s from guessing a version number that may not exist.
+//
+// The import map above is required, not cosmetic: current Three.js builds
+// have examples/jsm/controls/OrbitControls.js itself do `import ... from
+// 'three'` -- a bare specifier the browser can't resolve from a raw CDN
+// URL without one. Without the map, that import throws inside the second
+// .then() below and the whole thing silently falls through to the
+// `showMessage('3D library failed to load...')` branch -- which is
+// exactly why the downloadable MP4 (a separate, server-side matplotlib
+// pipeline with no Three.js involved) could work while the live in-page
+// replay didn't.
 
 const track = {{ track|tojson }};
 const trackMeta = {{ track_meta|tojson }};
@@ -774,10 +842,10 @@ window.setSpeed = setSpeed;
 if(!hasTimes){
     showMessage('No GPS track in this log -- flight path unavailable.');
 } else {
-    import('https://cdn.jsdelivr.net/npm/three@latest/build/three.module.js')
+    import('three')
         .then(mod => {
             THREE = mod;
-            return import('https://cdn.jsdelivr.net/npm/three@latest/examples/jsm/controls/OrbitControls.js');
+            return import('three/addons/controls/OrbitControls.js');
         })
         .then(controlsMod => {
             init3D(controlsMod.OrbitControls);

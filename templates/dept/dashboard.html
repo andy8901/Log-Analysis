@@ -91,7 +91,9 @@
                 </td>
                 <td>{{ u.user.full_name }}</td>
                 <td>
-                    {% if u.analysis %}
+                    {% if u.source == 'imported' %}
+                    <span class="badge" style="background:var(--slate-500);" title="Backfilled from historical data -- no raw log">Imported</span>
+                    {% elif u.analysis %}
                     <a class="btn" href="{{ url_for('dept.view_report', upload_id=u.id) }}">View</a>
                     {% endif %}
                 </td>

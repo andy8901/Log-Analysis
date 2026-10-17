@@ -323,3 +323,83 @@ def drone_flight_series(uploads):
         "battery_sag": [u.analysis.battery_sag_pct for u in completed],
         "distance": [u.analysis.distance_travelled_m for u in completed],
     }
+
+
+def _ml_num(value):
+    """A multilog_analyzer.py field is either a real number or the literal
+    string multilog_analyzer.NA ('N/A (not in ArduPilot logs)') / 'N/A' for
+    a field that log simply doesn't contain -- never a value to average or
+    count as an issue. A value read back from an admin-imported Excel can
+    also be NaN (float): pandas reads a blank cell, or any text in its own
+    default NA-values list -- "None"/"N/A"/"null"/etc, case-insensitively
+    -- as NaN, not the original string, so that has to be treated the same
+    as "missing" here too."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and value == value:  # excludes NaN (NaN != NaN)
+        return value
+    return None
+
+
+def _ml_text(value):
+    """Same deal as _ml_num but for a field read as text -- "" for
+    anything that isn't a real value (None, NaN, or one of the "nothing
+    here" placeholder strings), the stripped string otherwise."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value != value:  # NaN
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in ("none", "nan", "n/a", "null") else text
+
+
+def multilog_aggregate(uploads):
+    """Metrics that live only in the richer multilog_analyzer.py field set
+    (see AnalysisResult.multilog_json) -- captured once at upload time for
+    a real upload, or verbatim for an admin-imported historical row (both
+    read the same way here, so imported data folds into these numbers
+    exactly like live uploads). Flights without multilog_json (uploaded
+    before this feature existed) are simply skipped -- these averages and
+    counts reflect whatever subset of `uploads` has the data, the same
+    "-- when unavailable" pattern as the rest of this module."""
+    ranges = []
+    failsafe_voltages = []
+    thrust_issue_flights = 0
+    gps_issue_flights = 0
+    battery_failsafe_flights = 0
+    scored_flights = 0
+
+    for u in uploads:
+        if u.status != "completed" or not u.analysis:
+            continue
+        ml = u.analysis.get_multilog()
+        if not ml:
+            continue
+        scored_flights += 1
+
+        max_range = _ml_num(ml.get("Max Home Distance (m)"))
+        if max_range is not None:
+            ranges.append(max_range)
+
+        if _ml_text(ml.get("Battery Failsafe")).lower() == "yes":
+            battery_failsafe_flights += 1
+            min_volt = _ml_num(ml.get("Min Voltage (V)"))
+            if min_volt is not None:
+                failsafe_voltages.append(min_volt)
+
+        if _ml_text(ml.get("Potential Thrust Loss")):
+            thrust_issue_flights += 1
+
+        glitch_count = _ml_num(ml.get("GPS Glitch Count")) or 0
+        failsafe_type = _ml_text(ml.get("Failsafe Type"))
+        if glitch_count > 0 or "GPS" in failsafe_type.upper():
+            gps_issue_flights += 1
+
+    return {
+        "scored_flights": scored_flights,
+        "avg_max_range_m": _avg(ranges),
+        "avg_battery_voltage_at_failsafe_v": _avg(failsafe_voltages),
+        "battery_failsafe_flights": battery_failsafe_flights,
+        "thrust_issue_flights": thrust_issue_flights,
+        "gps_issue_flights": gps_issue_flights,
+    }
