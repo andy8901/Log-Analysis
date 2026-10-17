@@ -15,12 +15,52 @@ upload -- the file is already safe in the local archive regardless."""
 
 import os
 import shutil
+import time
 
 from flask import current_app
 
 
 def is_configured():
     return bool(current_app.config.get("DRIVE_SYNC_ROOT"))
+
+
+def diagnostics():
+    """Everything the Admin Overview page needs to self-diagnose a sync
+    problem without a shell on the server: the configured path, its
+    resolved absolute form (so a relative path isn't silently ambiguous),
+    whether that folder currently exists, and whether some other
+    environment variable was overridden by .env to get here (see
+    config.py) -- the most common cause of "I changed the drive but it's
+    still using the old one"."""
+    root = current_app.config.get("DRIVE_SYNC_ROOT")
+    return {
+        "configured": bool(root),
+        "path": root,
+        "abs_path": os.path.abspath(root) if root else None,
+        "exists": os.path.isdir(root) if root else False,
+        "env_overridden": current_app.config.get("DRIVE_SYNC_ROOT_ENV_OVERRIDDEN", False),
+        "prior_env_value": current_app.config.get("DRIVE_SYNC_ROOT_PRIOR_ENV_VALUE"),
+    }
+
+
+def test_write():
+    """Writes, then immediately removes, a small marker file at the
+    configured root -- confirms the running server process can actually
+    write there right now, not just that the path string looks plausible.
+    Returns (ok, message) for a flash() on the Admin Overview page."""
+    root = current_app.config.get("DRIVE_SYNC_ROOT")
+    if not root:
+        return False, "Drive sync is not configured (DRIVE_SYNC_ROOT is unset in .env)."
+
+    marker = os.path.join(root, f".neosky_sync_test_{int(time.time())}.tmp")
+    try:
+        os.makedirs(root, exist_ok=True)
+        with open(marker, "w") as f:
+            f.write("Neosky Drone Diagnostic Platform -- sync test file, safe to delete.\n")
+        os.remove(marker)
+        return True, f"Success -- wrote and removed a test file in {os.path.abspath(root)}."
+    except Exception as exc:
+        return False, f"Failed to write to {os.path.abspath(root)}: {exc}"
 
 
 def upload_to_drive(local_path, department_name, msn, dest_filename, kind="Reports"):

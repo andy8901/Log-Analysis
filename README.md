@@ -138,12 +138,13 @@ inbound ports on your router).
 
 ## Environment variables
 
-Set these either as real environment variables, or (recommended, especially
-on Windows) in a `.env` file in the project root — it's loaded
-automatically on startup regardless of how you launch the app
-(`python wsgi.py`, `run_windows.bat`, gunicorn/waitress directly). A real
-environment variable already set in your shell always wins over `.env`.
-`.env` is gitignored — it's config, never commit it.
+Set these in a `.env` file in the project root — it's loaded automatically
+on startup regardless of how you launch the app (`python wsgi.py`,
+`run_windows.bat`, gunicorn/waitress directly), and **`.env` always wins**,
+even over a real environment variable already set for the process (a
+leftover PowerShell `$env:`, or a persistent Windows System/User variable
+from an earlier setup attempt). `.env` is gitignored — it's config, never
+commit it.
 
 ```
 SECRET_KEY=something-random
@@ -151,11 +152,16 @@ ADMIN_PASSWORD=a-real-password
 DRIVE_SYNC_ROOT=I:\My Drive\LogAnalysis
 ```
 
-A `.env` file beats setting `$env:VAR=...` by hand in PowerShell: that only
-applies to the one terminal session it was typed in, so restarting the
-server from a new window — or forgetting you typed it — silently reverts
-to the old/default value. This is the #1 cause of "I changed the setting
-but it's not taking effect."
+Editing `.env` and restarting the server (`.env` is only read at startup —
+a plain `git pull` or file edit doesn't apply until the process restarts)
+is the one place to change these. Avoid setting `$env:VAR=...` by hand in
+PowerShell instead: it only applies to the one terminal session it was
+typed in, so restarting the server from a new window — or forgetting you
+typed it — silently reverts to the old/default value. If you've ever set
+one of these as a *persistent* Windows environment variable (System
+Properties → Environment Variables, not just `$env:` in a terminal), it's
+now safe to leave in place or delete either way — `.env` takes priority
+over it regardless.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -181,9 +187,10 @@ project, no JSON key.
    `C:\Users\<you>\Google Drive` depending on how you set it up during
    install).
 3. Create a subfolder in there for this app, e.g. `G:\My Drive\LogAnalysis`.
-4. Set the env var to that path:
-   ```powershell
-   $env:DRIVE_SYNC_ROOT="G:\My Drive\LogAnalysis"
+4. Set `DRIVE_SYNC_ROOT` in `.env` to that path (see **Environment
+   variables** above) and restart the server:
+   ```
+   DRIVE_SYNC_ROOT=G:\My Drive\LogAnalysis
    ```
 
 That's it — whatever this app writes into that folder, Google Drive for
@@ -195,6 +202,14 @@ is unreachable, or the disk is full, uploads still succeed — only the
 Drive-folder copy is skipped (with a warning logged), never the upload
 itself. Nothing here touches your Drive storage quota differently than
 dragging the same file in manually would.
+
+**Verifying it's actually using the path you expect:** the Admin Overview
+page shows a "Drive sync" line with the full resolved path and a **Test
+Sync** button that writes (and immediately deletes) a small test file at
+that path right now, so you get an immediate pass/fail without needing a
+terminal on the server. If a stale environment variable was overriding
+your `.env` setting, that line also says so explicitly and names the old
+value that was in effect.
 
 ## Deploying to the cloud
 

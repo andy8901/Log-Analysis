@@ -7,6 +7,8 @@ from flask_login import current_user, login_required
 
 from app import db
 from app.decorators import admin_required
+from app.drive_sync import diagnostics as drive_sync_diagnostics
+from app.drive_sync import test_write as drive_sync_test_write
 from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
 from app.stats import (
     active_drone_trend, drone_aggregate, flight_summary_aggregate,
@@ -92,14 +94,21 @@ def dashboard():
         for row in rows
     ]
 
-    drive_sync_root = current_app.config.get("DRIVE_SYNC_ROOT")
-
     return render_template(
         "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
         flight_summary=flight_summary, daily_trend=daily_trend,
         severity=severity, anomalies=anomalies, top_drones=top_drones,
-        dept_chart=dept_chart, drive_sync_root=drive_sync_root,
+        dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
     )
+
+
+@admin_bp.route("/drive-sync-test", methods=["POST"])
+def drive_sync_test():
+    ok, message = drive_sync_test_write()
+    AuditLog.record(current_user, "drive_sync_test", f"ok={ok}: {message}")
+    db.session.commit()
+    flash(message, "success" if ok else "error")
+    return redirect(url_for("admin.dashboard"))
 
 
 # ---- Global drones / people views --------------------------------------
