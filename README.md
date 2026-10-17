@@ -63,25 +63,44 @@ records and never merged.
 
 ## Admin analytics
 
-- **Overview** (`/admin/`) — org-wide totals, logs analyzed today/YTD, a
-  14-day daily activity trend, and a per-department breakdown.
-- **All Drones** (`/admin/drones`) — every drone across every department,
-  with aggregates: total logs/flights, avg flight time, avg battery sag %
-  (voltage drop across a flight), avg distance flown (summed GPS track,
-  not just farthest point from home), critical/warning/pass counts.
+- **Organization Overview** (`/admin/`) — org-wide totals with trend badges
+  (vs. the previous 7 days), a 14-day Flights Trend line chart, a
+  Department Performance comparison (flights vs. anomalies), an Issue
+  Severity breakdown, a Top Drones by Issues table, a Recent Anomalies
+  feed, a takeoff-location map, and the per-department breakdown table.
+- **Fleet & Drones** (`/admin/drones`) — every drone across every
+  department, with aggregates: total logs/flights, avg flight time, avg
+  battery sag % (voltage drop across a flight), avg distance flown (summed
+  GPS track, not just farthest point from home), critical/warning/pass
+  counts. Each drone's own detail page adds a flight-duration/battery-sag
+  trend chart across its history.
 - **People** (`/admin/people`) — per-person logs today/YTD/total and last
   upload time. This is the one place individual breakdowns are visible.
-- **Export Raw Data** (`/admin/export/raw-data.xlsx`) — one Excel file,
+- **Multilog Analysis** (`/admin/export/raw-data.xlsx`) — one Excel file,
   every completed upload across every department, one row each.
+
+A department's own dashboard (`/dashboard`) shows the same style of
+widgets scoped to that department — or to just one person's own uploads
+when a non-admin is viewing, per the confidentiality rule above — with an
+Anomaly Types breakdown (GPS Loss / Motor / Battery / Sensor, categorized
+from the alerts `analyzer.py`/`rca.py` already produce) in place of the
+org-wide Issue Severity view.
 
 ## Running locally
 
 ```bash
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python wsgi.py
 ```
+
+Use `python -m pip install ...` rather than a bare `pip install ...` — on
+machines with more than one Python installed, `pip` and `python` can
+silently point at different interpreters, which shows up as
+`ModuleNotFoundError: No module named 'flask'` (or similar) when you then
+run `python wsgi.py`. `python -m pip` guarantees the install lands in the
+exact interpreter that will run the app.
 
 Open http://localhost:8080 — you'll land on the login page.
 
@@ -96,10 +115,10 @@ Log in as admin, create a department under **Departments**, then create a
 department user account for it under **Users**. That department user can
 then log in and start uploading logs.
 
-**Note on upgrading from an older checkout:** this version added columns
-to `AnalysisResult` and a new `MultilogBatch` table. There's no migration
-tool (Alembic) wired up yet — delete `instance/app.db` and let it
-re-bootstrap rather than running against an old schema.
+**Note on upgrading from an older checkout:** the schema has changed across
+versions (e.g. `AnalysisResult` gained denormalized metric columns). There's
+no migration tool (Alembic) wired up yet — delete `instance/app.db` and let
+it re-bootstrap rather than running against an old schema.
 
 ## Running it for your whole organization on Windows
 
