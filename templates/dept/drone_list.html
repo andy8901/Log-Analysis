@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_drone_thumb.html" import drone_thumb %}
 {% block title %}Drones — {{ department.name }}{% endblock %}
 {% block content %}
 <div class="card">
@@ -7,6 +8,7 @@
     <table>
         <thead>
             <tr>
+                <th></th>
                 <th>MSN</th>
                 <th>Model</th>
                 <th>Status</th>
@@ -18,6 +20,7 @@
         <tbody>
         {% for d in drones %}
             <tr>
+                <td>{{ drone_thumb(d.model) }}</td>
                 <td>{{ d.msn }}</td>
                 <td>{{ d.model }}</td>
                 <td>{{ d.status }}</td>
@@ -26,7 +29,7 @@
                 <td><a class="btn" href="{{ url_for('dept.drone_detail', drone_id=d.id) }}">View History</a></td>
             </tr>
         {% else %}
-            <tr><td colspan="6" style="text-align:center;color:#64748b;">No drones registered yet.</td></tr>
+            <tr><td colspan="7" style="text-align:center;color:#64748b;">No drones registered yet.</td></tr>
         {% endfor %}
         </tbody>
     </table>
