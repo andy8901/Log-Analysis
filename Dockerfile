@@ -1,9 +1,16 @@
 # Use an official Python runtime as a parent image
 FROM python:3.11-slim
 
-# Install system dependencies required for compiling some MAVLink/Python extensions
+# Install system dependencies required for compiling some MAVLink/Python
+# extensions, plus rclone -- only used if DRIVE_SYNC_RCLONE_REMOTE is set
+# (see app/drive_sync.py), harmless and inert otherwise. Google Drive for
+# Desktop (the Windows/Mac Drive-sync mechanism) has no Linux build, so
+# this is the one that actually works in a container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
+    unzip \
+    && curl -fsSL https://rclone.org/install.sh | bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container

@@ -8,8 +8,10 @@
         <span style="display:inline-flex;align-items:center;gap:6px;">
             <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ 'var(--good)' if drive_sync.configured and drive_sync.exists else ('var(--warn)' if drive_sync.configured else 'var(--slate-300)') }};"></span>
             {% if drive_sync.configured %}
-                Drive sync: {{ drive_sync.abs_path }}
-                {% if not drive_sync.exists %}<strong style="color:var(--warn);">&mdash; folder does not exist yet</strong>{% endif %}
+                Drive sync ({{ 'rclone' if drive_sync.mode == 'rclone' else 'folder' }}): {{ drive_sync.abs_path }}
+                {% if not drive_sync.exists %}
+                <strong style="color:var(--warn);">&mdash; {{ drive_sync.exists_label if drive_sync.mode == 'rclone' else 'folder does not exist yet' }}</strong>
+                {% endif %}
             {% else %}
                 Drive sync: not configured
             {% endif %}
