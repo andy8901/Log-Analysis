@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html>
 <head>
+<script>
+(function(){
+    try {
+        var saved = localStorage.getItem('neosky-theme');
+        if (saved === 'light' || saved === 'dark') {
+            document.documentElement.setAttribute('data-theme', saved);
+        }
+    } catch (e) {}
+})();
+</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Neosky Drone Diagnostic Platform{% endblock %}</title>
@@ -9,7 +19,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        :root{
+        :root, :root[data-theme="dark"]{
             --navy-950:#0b1220;
             --navy-900:#0f172a;
             --navy-800:#15223b;
@@ -35,100 +45,151 @@
             --radius-sm:8px;
             --radius-md:12px;
             --radius-lg:18px;
-            --shadow-sm:0 1px 2px rgba(15,23,42,0.06);
-            --shadow-md:0 8px 24px rgba(15,23,42,0.10);
-            --shadow-lg:0 24px 60px rgba(15,23,42,0.35);
             --font:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+            --app-bg:#0b1220;
+            --card-bg:#111a2d;
+            --card-border:rgba(255,255,255,0.07);
+            --text-strong:#f1f5f9;
+            --text-body:#cbd5e1;
+            --text-muted:#8b96ab;
+            --table-border:rgba(255,255,255,0.08);
+            --table-stripe:rgba(255,255,255,0.025);
+            --table-hover:rgba(2,132,199,0.14);
+            --input-bg:#0c1424;
+            --input-border:#263048;
+            --shadow-card:0 14px 36px rgba(0,0,0,0.45);
+            --shadow-sm:0 1px 2px rgba(0,0,0,0.3);
+        }
+        :root[data-theme="light"]{
+            --app-bg:#eef1f6;
+            --card-bg:#ffffff;
+            --card-border:#e6eaf1;
+            --text-strong:#0f172a;
+            --text-body:#3a4556;
+            --text-muted:#718096;
+            --table-border:#edf0f5;
+            --table-stripe:#f8fafc;
+            --table-hover:#e8f3fc;
+            --input-bg:#ffffff;
+            --input-border:#d7dee8;
+            --shadow-card:0 10px 28px rgba(15,23,42,0.08);
+            --shadow-sm:0 1px 2px rgba(15,23,42,0.06);
         }
 
         *{ box-sizing:border-box; }
 
+        html,body{ height:100%; }
         body{
             font-family:var(--font);
-            background:linear-gradient(160deg,var(--navy-950) 0%,var(--navy-700) 55%,var(--navy-800) 100%);
-            background-attachment:fixed;
+            background:var(--app-bg);
             margin:0;
             padding:0;
             min-height:100vh;
-            color:var(--navy-900);
+            color:var(--text-body);
             -webkit-font-smoothing:antialiased;
         }
 
-        h1,h2,h3,h4{ font-weight:700; letter-spacing:-0.01em; }
+        h1,h2,h3,h4{ font-weight:700; letter-spacing:-0.01em; color:var(--text-strong); }
 
-        /* ---- Top navigation ---- */
-        .topnav{
-            position:sticky; top:0; z-index:50;
-            background:rgba(15,23,42,0.92);
-            backdrop-filter:blur(10px);
-            color:white;
-            padding:0 28px;
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            flex-wrap:wrap;
-            gap:12px;
-            border-bottom:1px solid rgba(255,255,255,0.08);
-            box-shadow:0 1px 0 rgba(0,0,0,0.2);
+        a{ color:inherit; }
+
+        /* ---- App shell ---- */
+        .app-shell{ display:flex; min-height:100vh; }
+
+        /* ---- Sidebar (always dark, independent of theme) ---- */
+        .sidenav{
+            width:230px; flex:0 0 230px;
+            background:#0a1120;
+            border-right:1px solid rgba(255,255,255,0.06);
+            display:flex; flex-direction:column;
+            position:sticky; top:0; height:100vh; overflow-y:auto;
         }
-        .topnav-left{ display:flex; align-items:center; gap:16px; padding:14px 0; }
-        .topnav .brand{
-            font-weight:800; font-size:1.05em; letter-spacing:-0.01em;
-            display:flex; align-items:center; gap:8px;
-            white-space:nowrap;
+        .sidenav .brand{
+            display:flex; align-items:center; gap:10px;
+            padding:20px 18px 16px;
+            color:white; font-weight:800; font-size:1.02em;
         }
-        .topnav .brand .logo-mark{
+        .sidenav .brand .logo-mark{
             display:inline-flex; align-items:center; justify-content:center;
-            width:28px; height:28px; border-radius:9px;
+            width:32px; height:32px; border-radius:10px; flex:0 0 32px;
             background:linear-gradient(135deg,var(--accent),#38bdf8);
-            font-size:15px; box-shadow:var(--shadow-sm);
+            font-size:16px; box-shadow:var(--shadow-sm);
         }
-        .topnav-links{ display:flex; align-items:center; gap:4px; flex-wrap:wrap; padding:10px 0; }
-        .topnav a{
-            color:var(--slate-300); text-decoration:none; font-size:0.86em; font-weight:500;
-            padding:8px 12px; border-radius:var(--radius-sm);
+        .sidenav .brand .brand-sub{
+            display:block; font-weight:500; font-size:0.72em; color:#7c8aa3; margin-top:1px;
+        }
+        .sidenav-links{ flex:1; padding:10px 10px; display:flex; flex-direction:column; gap:2px; }
+        .sidenav-section-label{
+            color:#5b6a86; font-size:0.68em; font-weight:700; text-transform:uppercase;
+            letter-spacing:0.06em; padding:14px 12px 6px;
+        }
+        .sidenav a{
+            display:flex; align-items:center; gap:11px;
+            color:#aab4c8; text-decoration:none; font-size:0.87em; font-weight:500;
+            padding:9px 12px; border-radius:var(--radius-sm);
             transition:background 0.15s ease, color 0.15s ease;
             white-space:nowrap;
         }
-        .topnav a:hover{ color:white; background:rgba(255,255,255,0.08); }
-        .topnav a.active{ color:white; background:rgba(2,132,199,0.35); }
-        .topnav a.logout-link{ color:#fca5a5; }
-        .topnav a.logout-link:hover{ background:rgba(220,38,38,0.18); color:#fecaca; }
+        .sidenav a svg{ flex:0 0 17px; width:17px; height:17px; opacity:0.85; }
+        .sidenav a:hover{ color:white; background:rgba(255,255,255,0.06); }
+        .sidenav a.active{ color:white; background:rgba(2,132,199,0.22); box-shadow:inset 3px 0 0 var(--accent); }
+        .sidenav a.logout-link{ color:#fca5a5; }
+        .sidenav a.logout-link:hover{ background:rgba(220,38,38,0.16); color:#fecaca; }
 
-        .who-pill{
-            display:flex; align-items:center; gap:8px;
-            color:var(--slate-300); font-size:0.82em;
-            padding:5px 10px 5px 5px; border-radius:999px;
-            background:rgba(255,255,255,0.06);
+        .sidenav-who{
+            margin:10px; padding:11px 12px; border-radius:var(--radius-md);
+            background:rgba(255,255,255,0.05);
+            display:flex; align-items:center; gap:10px;
         }
-        .who-pill .avatar{
-            width:22px; height:22px; border-radius:50%;
+        .sidenav-who .avatar{
+            width:30px; height:30px; border-radius:50%; flex:0 0 30px;
             background:linear-gradient(135deg,#38bdf8,var(--accent));
-            color:white; font-weight:700; font-size:0.72em;
+            color:white; font-weight:700; font-size:0.8em;
             display:flex; align-items:center; justify-content:center;
         }
-        .who-pill .role-tag{
-            text-transform:uppercase; font-size:0.68em; letter-spacing:0.04em;
-            color:var(--slate-400);
+        .sidenav-who .who-name{ color:white; font-size:0.85em; font-weight:600; line-height:1.25; }
+        .sidenav-who .who-role{
+            color:#8291ab; font-size:0.72em; text-transform:uppercase; letter-spacing:0.03em;
         }
+
+        /* ---- Main column ---- */
+        .app-main{ flex:1; min-width:0; }
+        .topbar{
+            display:flex; align-items:center; justify-content:flex-end; gap:14px;
+            padding:16px 28px 0;
+        }
+        .theme-toggle{
+            width:50px; height:27px; border-radius:999px; position:relative; cursor:pointer;
+            background:var(--input-bg); border:1px solid var(--input-border);
+            display:inline-flex; align-items:center; padding:0;
+        }
+        .theme-toggle .knob{
+            position:absolute; top:2px; left:2px; width:21px; height:21px; border-radius:50%;
+            background:var(--accent); transition:left 0.18s ease;
+            display:flex; align-items:center; justify-content:center; color:white;
+        }
+        .theme-toggle .knob svg{ width:12px; height:12px; }
+        :root[data-theme="light"] .theme-toggle .knob{ left:27px; }
 
         /* ---- Layout ---- */
-        .wrap{ max-width:1300px; margin:30px auto; padding:0 20px 48px; }
+        .wrap{ max-width:1360px; margin:18px auto 48px; padding:0 28px 0; }
 
         .card{
-            background:white;
+            background:var(--card-bg);
             border-radius:var(--radius-lg);
             padding:32px;
-            box-shadow:var(--shadow-lg);
-            border:1px solid rgba(255,255,255,0.6);
+            box-shadow:var(--shadow-card);
+            border:1px solid var(--card-border);
         }
 
-        h1{ font-size:1.6em; margin-top:0; }
+        h1{ font-size:1.5em; margin-top:0; }
         .card > h1:first-child{ margin-bottom:6px; }
+        p{ color:var(--text-body); }
 
         /* ---- Flash messages ---- */
         .flash{
-            padding:13px 18px; border-radius:var(--radius-md); margin:0 auto 16px; max-width:1300px;
+            padding:13px 18px; border-radius:var(--radius-md); margin:0 auto 16px; max-width:1360px;
             font-weight:600; font-size:0.92em; border-left:4px solid transparent;
             box-shadow:var(--shadow-sm);
         }
@@ -137,16 +198,16 @@
 
         /* ---- Tables ---- */
         table{ width:100%; border-collapse:collapse; font-size:0.92em; }
-        th,td{ border-bottom:1px solid var(--slate-200); padding:11px 14px; text-align:left; }
+        th,td{ border-bottom:1px solid var(--table-border); padding:11px 14px; text-align:left; }
         th{
-            background:var(--navy-900); color:white; font-weight:600;
-            font-size:0.82em; text-transform:uppercase; letter-spacing:0.03em;
+            color:var(--text-muted); font-weight:700;
+            font-size:0.72em; text-transform:uppercase; letter-spacing:0.05em;
+            border-bottom:2px solid var(--table-border);
         }
-        th:first-child{ border-top-left-radius:var(--radius-sm); }
-        th:last-child{ border-top-right-radius:var(--radius-sm); }
+        td{ color:var(--text-body); }
         tbody tr{ transition:background 0.12s ease; }
-        tbody tr:nth-child(even){ background:var(--slate-50); }
-        tbody tr:hover{ background:var(--accent-light); }
+        tbody tr:nth-child(even){ background:var(--table-stripe); }
+        tbody tr:hover{ background:var(--table-hover); }
 
         /* ---- Buttons ---- */
         .btn{
@@ -155,7 +216,7 @@
             display:inline-block; font-size:0.88em; box-shadow:var(--shadow-sm);
             transition:background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
         }
-        .btn:hover{ background:var(--accent-600); box-shadow:var(--shadow-md); transform:translateY(-1px); }
+        .btn:hover{ background:var(--accent-600); box-shadow:0 8px 20px rgba(2,132,199,0.25); transform:translateY(-1px); }
         .btn:active{ transform:translateY(0); }
         .btn.danger{ background:var(--danger); }
         .btn.danger:hover{ background:#b91c1c; }
@@ -164,15 +225,15 @@
 
         /* ---- Forms ---- */
         .input-group{ display:flex; flex-direction:column; margin-bottom:14px; }
-        .input-group label{ margin-bottom:6px; font-weight:600; font-size:0.86em; color:var(--navy-800); }
+        .input-group label{ margin-bottom:6px; font-weight:600; font-size:0.86em; color:var(--text-strong); }
         input,select{
-            padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--slate-300);
+            padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--input-border);
             font-family:var(--font); font-size:0.92em; transition:border-color 0.15s ease, box-shadow 0.15s ease;
-            background:white;
+            background:var(--input-bg); color:var(--text-strong);
         }
         input:focus,select:focus{
             outline:none; border-color:var(--accent);
-            box-shadow:0 0 0 3px var(--accent-light);
+            box-shadow:0 0 0 3px rgba(2,132,199,0.18);
         }
         .filters{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; align-items:flex-end; }
         .filters .input-group{ margin-bottom:0; min-width:160px; }
@@ -189,69 +250,133 @@
 
         /* ---- Stat tiles ---- */
         .summary-grid{
-            display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+            display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
             gap:14px; margin:20px 0 30px;
         }
         .metric-card{
             background:linear-gradient(155deg,var(--navy-900),var(--navy-800));
-            color:white; padding:18px 20px; border-radius:var(--radius-md); text-align:center;
-            box-shadow:var(--shadow-md);
+            color:white; padding:16px 20px; border-radius:var(--radius-md);
+            box-shadow:var(--shadow-card);
             transition:transform 0.15s ease;
+            position:relative; overflow:hidden;
         }
         .metric-card:hover{ transform:translateY(-2px); }
+        .metric-card .metric-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+        .metric-card .metric-icon{
+            width:30px; height:30px; border-radius:9px; flex:0 0 30px;
+            background:rgba(255,255,255,0.1);
+            display:flex; align-items:center; justify-content:center;
+        }
+        .metric-card .metric-icon svg{ width:16px; height:16px; }
         .metric-card h4{
-            margin:0 0 8px 0; font-size:0.72em; opacity:0.75;
+            margin:0 0 8px 0; font-size:0.72em; opacity:0.75; color:white;
             text-transform:uppercase; letter-spacing:0.04em; font-weight:600;
         }
-        .metric-card h2{ margin:0; font-size:1.65em; font-variant-numeric:tabular-nums; font-weight:700; }
+        .metric-card h2{ margin:4px 0 0; font-size:1.55em; font-variant-numeric:tabular-nums; font-weight:700; color:white; }
         .metric-card small{ opacity:0.65; font-size:0.72em; }
+        .metric-trend{
+            display:inline-flex; align-items:center; gap:3px; margin-top:8px;
+            font-size:0.74em; font-weight:700; padding:2px 8px; border-radius:999px;
+        }
+        .metric-trend.up{ color:#bbf7d0; background:rgba(22,163,74,0.25); }
+        .metric-trend.down{ color:#fecaca; background:rgba(220,38,38,0.25); }
+        .metric-trend.flat{ color:#cbd5e1; background:rgba(255,255,255,0.1); }
+
+        @media (max-width:900px){
+            .sidenav{ width:62px; flex-basis:62px; }
+            .sidenav .brand span.brand-text, .sidenav .brand .brand-sub, .sidenav a .nav-label, .sidenav-who .who-text{ display:none; }
+            .sidenav a{ justify-content:center; }
+            .sidenav-who{ justify-content:center; }
+            .wrap{ padding:0 14px; }
+        }
     </style>
 </head>
 <body>
 
-<div class="topnav">
-    <div class="topnav-left">
-        <span class="brand">
+{% macro icon(name) -%}
+{%- if name == 'overview' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+{%- elif name == 'departments' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
+{%- elif name == 'fleet' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.2"/><path d="M12 9.8V5M12 18.2V14M9.8 12H5M18.2 12H14"/><circle cx="4.5" cy="4.5" r="1.6"/><circle cx="19.5" cy="4.5" r="1.6"/><circle cx="4.5" cy="19.5" r="1.6"/><circle cx="19.5" cy="19.5" r="1.6"/></svg>
+{%- elif name == 'people' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3.6"/><path d="M5 21a7 7 0 0 1 14 0"/></svg>
+{%- elif name == 'users' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.3"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16.3 5.2a3.3 3.3 0 0 1 0 6.3"/><path d="M15.5 14.3c2.9 0.5 5 2.6 5 5.7"/></svg>
+{%- elif name == 'export' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
+{%- elif name == 'audit' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 3.2"/></svg>
+{%- elif name == 'upload' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l-4-4-4 4"/><path d="M12 12v9"/><path d="M20.4 17.4A5 5 0 0 0 18 8h-1.3A7 7 0 1 0 4 16"/></svg>
+{%- elif name == 'logout' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+{%- elif name == 'sun' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.4M12 19.6V22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2 12h2.4M19.6 12H22M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"/></svg>
+{%- else -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>
+{%- endif -%}
+{%- endmacro %}
+
+<div class="app-shell">
+    <nav class="sidenav">
+        <div class="brand">
             <span class="logo-mark">🛸</span>
-            Neosky Drone Diagnostic Platform
-        </span>
+            <span>
+                <span class="brand-text">Neosky</span>
+                <span class="brand-sub">Drone Log Analysis</span>
+            </span>
+        </div>
+
         {% if current_user.is_authenticated %}
-        <span class="who-pill">
-            <span class="avatar">{{ current_user.full_name[0]|upper }}</span>
-            {{ current_user.full_name }}
-            <span class="role-tag">{{ current_user.role }}{% if current_user.department %} &middot; {{ current_user.department.name }}{% endif %}</span>
-        </span>
-        {% endif %}
-    </div>
-    <div class="topnav-links">
-        {% if current_user.is_authenticated %}
+        <div class="sidenav-links">
             {% if current_user.is_admin %}
-                <a href="{{ url_for('admin.dashboard') }}" class="{{ 'active' if request.endpoint == 'admin.dashboard' }}">Admin Overview</a>
-                <a href="{{ url_for('admin.all_drones') }}" class="{{ 'active' if request.endpoint == 'admin.all_drones' }}">All Drones</a>
-                <a href="{{ url_for('admin.all_people') }}" class="{{ 'active' if request.endpoint == 'admin.all_people' }}">People</a>
-                <a href="{{ url_for('admin.departments') }}" class="{{ 'active' if request.endpoint == 'admin.departments' }}">Departments</a>
-                <a href="{{ url_for('admin.users') }}" class="{{ 'active' if request.endpoint == 'admin.users' }}">Users</a>
-                <a href="{{ url_for('admin.audit') }}" class="{{ 'active' if request.endpoint == 'admin.audit' }}">Audit Log</a>
-                <a href="{{ url_for('admin.export_raw_data') }}">Multilog Analysis</a>
+                <a href="{{ url_for('admin.dashboard') }}" class="{{ 'active' if request.endpoint == 'admin.dashboard' }}">{{ icon('overview') }}<span class="nav-label">Organization Overview</span></a>
+                <a href="{{ url_for('admin.departments') }}" class="{{ 'active' if request.endpoint == 'admin.departments' }}">{{ icon('departments') }}<span class="nav-label">Departments</span></a>
+                <a href="{{ url_for('admin.all_drones') }}" class="{{ 'active' if request.endpoint == 'admin.all_drones' }}">{{ icon('fleet') }}<span class="nav-label">Fleet &amp; Drones</span></a>
+                <a href="{{ url_for('admin.all_people') }}" class="{{ 'active' if request.endpoint == 'admin.all_people' }}">{{ icon('people') }}<span class="nav-label">People</span></a>
+                <a href="{{ url_for('admin.users') }}" class="{{ 'active' if request.endpoint == 'admin.users' }}">{{ icon('users') }}<span class="nav-label">Users</span></a>
+                <a href="{{ url_for('admin.export_raw_data') }}">{{ icon('export') }}<span class="nav-label">Multilog Analysis</span></a>
+                <a href="{{ url_for('admin.audit') }}" class="{{ 'active' if request.endpoint == 'admin.audit' }}">{{ icon('audit') }}<span class="nav-label">Audit Log</span></a>
             {% else %}
-                <a href="{{ url_for('dept.dashboard') }}" class="{{ 'active' if request.endpoint == 'dept.dashboard' }}">Dashboard</a>
-                <a href="{{ url_for('dept.upload') }}" class="{{ 'active' if request.endpoint == 'dept.upload' }}">Individual Log Analysis</a>
-                <a href="{{ url_for('dept.drone_list') }}" class="{{ 'active' if request.endpoint == 'dept.drone_list' }}">Drones</a>
+                <a href="{{ url_for('dept.dashboard') }}" class="{{ 'active' if request.endpoint == 'dept.dashboard' }}">{{ icon('overview') }}<span class="nav-label">Dashboard</span></a>
+                <a href="{{ url_for('dept.upload') }}" class="{{ 'active' if request.endpoint == 'dept.upload' }}">{{ icon('upload') }}<span class="nav-label">Upload Log</span></a>
+                <a href="{{ url_for('dept.drone_list') }}" class="{{ 'active' if request.endpoint in ('dept.drone_list', 'dept.drone_detail') }}">{{ icon('fleet') }}<span class="nav-label">Drones</span></a>
             {% endif %}
-            <a href="{{ url_for('auth.logout') }}" class="logout-link">Logout</a>
+            <a href="{{ url_for('auth.logout') }}" class="logout-link">{{ icon('logout') }}<span class="nav-label">Logout</span></a>
+        </div>
+
+        <div class="sidenav-who">
+            <span class="avatar">{{ current_user.full_name[0]|upper }}</span>
+            <span class="who-text">
+                <div class="who-name">{{ current_user.full_name }}</div>
+                <div class="who-role">{{ current_user.role }}{% if current_user.department %} &middot; {{ current_user.department.name }}{% endif %}</div>
+            </span>
+        </div>
         {% endif %}
+    </nav>
+
+    <div class="app-main">
+        <div class="topbar">
+            <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle light / dark mode" title="Toggle light / dark mode">
+                <span class="knob">{{ icon('sun') }}</span>
+            </button>
+        </div>
+
+        <div class="wrap">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </div>
     </div>
 </div>
 
-<div class="wrap">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for category, message in messages %}
-            <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}
-    {% endwith %}
-
-    {% block content %}{% endblock %}
-</div>
+<script>
+(function(){
+    var btn = document.getElementById('themeToggle');
+    if(!btn) return;
+    btn.addEventListener('click', function(){
+        var current = document.documentElement.getAttribute('data-theme') || 'dark';
+        var next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('neosky-theme', next); } catch(e){}
+    });
+})();
+</script>
 
 </body>
 </html>

@@ -8,7 +8,12 @@ from flask_login import current_user, login_required
 from app import db
 from app.decorators import admin_required
 from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
-from app.stats import daily_counts, drone_aggregate, flight_summary_aggregate, person_aggregate, today_start, ytd_start
+from app.stats import (
+    active_drone_trend, drone_aggregate, flight_summary_aggregate,
+    daily_flight_trend, issue_severity_breakdown, person_aggregate,
+    recent_anomalies, today_start, top_drones_from_uploads, trend_pct,
+    period_window_counts, ytd_start,
+)
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -29,48 +34,71 @@ def dashboard():
     today = today_start()
     ytd = ytd_start()
 
+    all_uploads = Upload.query.all()
+    all_drones_list = Drone.query.all()
+    all_completed_uploads = [u for u in all_uploads if u.status == "completed" and u.analysis]
+
+    uploads_by_dept = {}
+    drones_by_dept = {}
+    for u in all_uploads:
+        uploads_by_dept.setdefault(u.department_id, []).append(u)
+    for d in all_drones_list:
+        drones_by_dept.setdefault(d.department_id, []).append(d)
+
     rows = []
     for dept in departments:
-        uploads = Upload.query.filter_by(department_id=dept.id)
-        completed = uploads.filter_by(status="completed")
+        dept_uploads = uploads_by_dept.get(dept.id, [])
+        completed = [u for u in dept_uploads if u.status == "completed"]
+        critical = [u for u in completed if u.analysis and u.analysis.report_status == "CRITICAL"]
+        warning = [u for u in completed if u.analysis and u.analysis.report_status == "WARNING"]
         rows.append({
             "department": dept,
-            "drones": Drone.query.filter_by(department_id=dept.id).count(),
-            "uploads": uploads.count(),
-            "completed": completed.count(),
-            "failed": uploads.filter_by(status="failed").count(),
-            "critical": uploads.join(AnalysisResult).filter(
-                AnalysisResult.report_status == "CRITICAL"
-            ).count(),
-            "logs_today": completed.filter(Upload.uploaded_at >= today).count(),
-            "logs_ytd": completed.filter(Upload.uploaded_at >= ytd).count(),
+            "drones": len(drones_by_dept.get(dept.id, [])),
+            "uploads": len(dept_uploads),
+            "completed": len(completed),
+            "failed": len([u for u in dept_uploads if u.status == "failed"]),
+            "critical": len(critical),
+            "warning": len(warning),
+            "logs_today": len([u for u in completed if u.uploaded_at and u.uploaded_at >= today]),
+            "logs_ytd": len([u for u in completed if u.uploaded_at and u.uploaded_at >= ytd]),
         })
 
-    all_completed = Upload.query.filter_by(status="completed")
     totals = {
         "departments": len(departments),
         "users": User.query.count(),
-        "drones": Drone.query.count(),
-        "uploads": Upload.query.count(),
-        "logs_today": all_completed.filter(Upload.uploaded_at >= today).count(),
-        "logs_ytd": all_completed.filter(Upload.uploaded_at >= ytd).count(),
+        "drones": len(all_drones_list),
+        "uploads": len(all_uploads),
+        "logs_today": len([u for u in all_completed_uploads if u.uploaded_at and u.uploaded_at >= today]),
+        "logs_ytd": len([u for u in all_completed_uploads if u.uploaded_at and u.uploaded_at >= ytd]),
     }
 
-    all_completed_uploads = all_completed.all()
-    trend = daily_counts(all_completed_uploads, days=14)
+    uploads_cur, uploads_prev = period_window_counts(all_uploads, days=7)
+    flights_cur, flights_prev = period_window_counts(all_completed_uploads, days=7)
+    drones_cur, drones_prev = active_drone_trend(all_uploads, days=7)
+    trends = {
+        "uploads": trend_pct(uploads_cur, uploads_prev),
+        "flights": trend_pct(flights_cur, flights_prev),
+        "drones": trend_pct(drones_cur, drones_prev),
+    }
+
     flight_summary = flight_summary_aggregate(all_completed_uploads)
+    daily_trend = daily_flight_trend(all_completed_uploads, days=14)
+    severity = issue_severity_breakdown(all_completed_uploads)
+    anomalies = recent_anomalies(all_completed_uploads, limit=6)
+    top_drones = top_drones_from_uploads(all_uploads, limit=5, include_department=True)
 
     dept_chart = [
-        {"name": row["department"].name, "logs": row["uploads"]}
+        {"name": row["department"].name, "flights": row["completed"], "anomalies": row["critical"] + row["warning"]}
         for row in rows
     ]
 
     drive_sync_root = current_app.config.get("DRIVE_SYNC_ROOT")
 
     return render_template(
-        "admin/dashboard.html", rows=rows, totals=totals, trend=trend,
-        flight_summary=flight_summary, dept_chart=dept_chart,
-        drive_sync_root=drive_sync_root,
+        "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
+        flight_summary=flight_summary, daily_trend=daily_trend,
+        severity=severity, anomalies=anomalies, top_drones=top_drones,
+        dept_chart=dept_chart, drive_sync_root=drive_sync_root,
     )
 
 

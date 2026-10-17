@@ -11,14 +11,22 @@
     {% endif %}
 
     <div class="summary-grid">
-        <div class="metric-card"><h4>Registered Drones</h4><h2>{{ summary.total_drones }}</h2></div>
-        <div class="metric-card"><h4>Total Logs Uploaded</h4><h2>{{ summary.total_logs }}</h2></div>
-        <div class="metric-card"><h4>Analyzed</h4><h2>{{ summary.completed }}</h2></div>
+        <div class="metric-card">
+            <h4>Log Uploads</h4><h2>{{ summary.total_logs }}</h2>
+            {% if trends.uploads is not none %}<span class="metric-trend {{ 'up' if trends.uploads >= 0 else 'down' }}">{{ '+' if trends.uploads >= 0 }}{{ trends.uploads }}% <small>vs last 7 days</small></span>{% endif %}
+        </div>
+        <div class="metric-card">
+            <h4>Flights Analyzed</h4><h2>{{ summary.completed }}</h2>
+            {% if trends.flights is not none %}<span class="metric-trend {{ 'up' if trends.flights >= 0 else 'down' }}">{{ '+' if trends.flights >= 0 }}{{ trends.flights }}% <small>vs last 7 days</small></span>{% endif %}
+        </div>
+        <div class="metric-card"><h4>Drones in Fleet</h4><h2>{{ summary.total_drones }}</h2></div>
         <div class="metric-card"><h4>Pending</h4><h2>{{ summary.pending }}</h2></div>
         <div class="metric-card"><h4>Failed</h4><h2>{{ summary.failed }}</h2></div>
         <div class="metric-card" style="background:#991b1b;"><h4>Critical</h4><h2>{{ summary.critical }}</h2></div>
     </div>
 
+    {% set donut_data = anomaly_types %}
+    {% set donut_title = 'Anomaly Types' %}
     {% include "_flight_summary.html" %}
 
     {% if not current_user.is_admin %}

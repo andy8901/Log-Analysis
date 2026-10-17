@@ -19,7 +19,11 @@ from app.decorators import department_required
 from app.drive_sync import upload_to_drive
 from app.flight3d import build_track
 from app.models import AnalysisResult, AuditLog, Department, Drone, Upload
-from app.stats import daily_counts, derive_result_metrics, flight_summary_aggregate
+from app.stats import (
+    anomaly_type_breakdown, daily_flight_trend, derive_result_metrics,
+    drone_flight_series, flight_summary_aggregate, period_window_counts,
+    recent_anomalies, top_drones_from_uploads, trend_pct,
+)
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
 
 dept_bp = Blueprint("dept", __name__)
@@ -92,8 +96,21 @@ def dashboard():
             AnalysisResult.report_status == "CRITICAL"
         ).count(),
     }
-    flight_summary = flight_summary_aggregate(all_uploads.all())
-    trend = daily_counts(all_uploads.filter_by(status="completed").all(), days=14)
+    scoped_uploads = all_uploads.all()
+    scoped_completed = [u for u in scoped_uploads if u.status == "completed" and u.analysis]
+
+    flight_summary = flight_summary_aggregate(scoped_completed)
+    daily_trend = daily_flight_trend(scoped_completed, days=14)
+    anomaly_types = anomaly_type_breakdown(scoped_completed)
+    anomalies = recent_anomalies(scoped_completed, limit=6)
+    top_drones = top_drones_from_uploads(scoped_uploads, limit=5)
+
+    uploads_cur, uploads_prev = period_window_counts(scoped_uploads, days=7)
+    flights_cur, flights_prev = period_window_counts(scoped_completed, days=7)
+    trends = {
+        "uploads": trend_pct(uploads_cur, uploads_prev),
+        "flights": trend_pct(flights_cur, flights_prev),
+    }
 
     return render_template(
         "dept/dashboard.html",
@@ -101,7 +118,11 @@ def dashboard():
         uploads=uploads,
         summary=summary,
         flight_summary=flight_summary,
-        trend=trend,
+        daily_trend=daily_trend,
+        anomaly_types=anomaly_types,
+        anomalies=anomalies,
+        top_drones=top_drones,
+        trends=trends,
         model_choices=DRONE_MODEL_CHOICES,
         filters={"msn": msn, "model": model, "status": status},
         own_only=own_only,
@@ -369,4 +390,8 @@ def drone_detail(drone_id):
         query = query.filter_by(user_id=current_user.id)
 
     uploads = query.order_by(Upload.uploaded_at.desc()).all()
-    return render_template("dept/drone_detail.html", drone=drone, uploads=uploads, own_only=own_only)
+    series = drone_flight_series(uploads)
+    return render_template(
+        "dept/drone_detail.html", drone=drone, uploads=uploads,
+        own_only=own_only, series=series,
+    )

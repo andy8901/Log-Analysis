@@ -12,14 +12,25 @@
     </div>
 
     <div class="summary-grid">
-        <div class="metric-card"><h4>Departments</h4><h2>{{ totals.departments }}</h2></div>
+        <div class="metric-card">
+            <h4>Total Uploads</h4><h2>{{ totals.uploads }}</h2>
+            {% if trends.uploads is not none %}<span class="metric-trend {{ 'up' if trends.uploads >= 0 else 'down' }}">{{ '+' if trends.uploads >= 0 }}{{ trends.uploads }}% <small>vs last 7 days</small></span>{% endif %}
+        </div>
+        <div class="metric-card">
+            <h4>Flights Analyzed</h4><h2>{{ totals.logs_ytd }}</h2>
+            {% if trends.flights is not none %}<span class="metric-trend {{ 'up' if trends.flights >= 0 else 'down' }}">{{ '+' if trends.flights >= 0 }}{{ trends.flights }}% <small>vs last 7 days</small></span>{% endif %}
+        </div>
+        <div class="metric-card">
+            <h4>Active Drones</h4><h2>{{ totals.drones }}</h2>
+            {% if trends.drones is not none %}<span class="metric-trend {{ 'up' if trends.drones >= 0 else 'down' }}">{{ '+' if trends.drones >= 0 }}{{ trends.drones }}% <small>vs last 7 days</small></span>{% else %}<span class="metric-trend flat">No change</span>{% endif %}
+        </div>
+        <div class="metric-card"><h4>Departments</h4><h2>{{ totals.departments }}</h2><span class="metric-trend flat">No change</span></div>
         <div class="metric-card"><h4>Users</h4><h2>{{ totals.users }}</h2></div>
-        <div class="metric-card"><h4>Drones</h4><h2>{{ totals.drones }}</h2></div>
-        <div class="metric-card"><h4>Total Uploads</h4><h2>{{ totals.uploads }}</h2></div>
         <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ totals.logs_today }}</h2></div>
-        <div class="metric-card"><h4>Logs Analyzed YTD</h4><h2>{{ totals.logs_ytd }}</h2></div>
     </div>
 
+    {% set donut_data = severity %}
+    {% set donut_title = 'Issue Severity' %}
     {% include "_flight_summary.html" %}
 
     <h2>By Department</h2>
@@ -32,6 +43,7 @@
                 <th>Completed</th>
                 <th>Failed</th>
                 <th>Critical</th>
+                <th>Warning</th>
                 <th>Today</th>
                 <th>YTD</th>
                 <th></th>
@@ -46,6 +58,7 @@
                 <td>{{ row.completed }}</td>
                 <td>{{ row.failed }}</td>
                 <td>{{ row.critical }}</td>
+                <td>{{ row.warning }}</td>
                 <td>{{ row.logs_today }}</td>
                 <td>{{ row.logs_ytd }}</td>
                 <td>
@@ -54,7 +67,7 @@
                 </td>
             </tr>
         {% else %}
-            <tr><td colspan="9" style="text-align:center;color:#64748b;">No departments yet — create one.</td></tr>
+            <tr><td colspan="10" style="text-align:center;color:var(--text-muted);">No departments yet — create one.</td></tr>
         {% endfor %}
         </tbody>
     </table>

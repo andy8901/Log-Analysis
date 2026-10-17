@@ -1,25 +1,45 @@
-{# Shared "graphical dashboard" panel -- used by both the admin overview
-   and the department dashboard, with whatever scope the caller already
-   filtered `flight_summary`/`trend` to (org-wide, one department, or just
-   one person's own uploads). Optional `dept_chart` (admin overview only)
-   adds a per-department comparison bar. #}
+{# Shared "interactive analytics" panel -- used by both the admin
+   organization overview and a department's own dashboard, with whatever
+   scope the caller already filtered the data to (org-wide, one
+   department, or just one person's own uploads).
+
+   Expected context (set by the including template before `{% include %}`):
+     flight_summary  -- dict from stats.flight_summary_aggregate()
+     daily_trend     -- list from stats.daily_flight_trend()
+     donut_data      -- dict {label: count} (severity or anomaly-type breakdown)
+     donut_title     -- string heading for the donut card
+     top_drones      -- list from stats.top_drones_from_uploads()
+     anomalies       -- list from stats.recent_anomalies()
+     dept_chart      -- optional list of {name, flights, anomalies} (admin overview only)
+#}
 
 <style>
     .viz-root {
-        color-scheme: light;
-        --surface-1:      #fcfcfb;
-        --text-primary:   #0b0b0b;
-        --text-secondary: #52514e;
-        --muted:          #898781;
-        --gridline:       #e1e0d9;
-        --series-1:       #2a78d6;
-        --series-2:       #eb6834;
-        --series-3:       #1baf7a;
-        --series-4:       #eda100;
+        color-scheme: light dark;
+        --series-1: #2a78d6;
+        --series-2: #eb6834;
+        --series-3: #1baf7a;
+        --series-4: #eda100;
+        --series-5: #e87ba4;
     }
-    .viz-root .chart-box{ background:var(--surface-1); border:1px solid var(--gridline); border-radius:14px; padding:16px; margin-bottom:20px; }
-    .viz-root .chart-box h4{ margin:0 0 10px 0; color:var(--text-primary); }
-    .viz-root canvas{ max-height:260px; }
+    .viz-root .chart-box{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:14px; padding:18px; margin-bottom:20px; }
+    .viz-root .chart-box h4{ margin:0 0 12px 0; color:var(--text-strong); font-size:0.95em; }
+    .viz-root canvas{ max-height:230px; }
+    .viz-root .analytics-grid{ display:grid; gap:18px; margin-bottom:0; }
+    .viz-row-3{ grid-template-columns: 1.3fr 1fr 1fr; }
+    .viz-row-2{ grid-template-columns: 1.3fr 1fr; }
+    @media (max-width:1100px){ .viz-row-3, .viz-row-2{ grid-template-columns: 1fr; } }
+    .viz-root table{ font-size:0.86em; }
+    .viz-root .anomaly-item{
+        display:flex; align-items:flex-start; gap:10px; padding:9px 0;
+        border-bottom:1px solid var(--table-border);
+    }
+    .viz-root .anomaly-item:last-child{ border-bottom:none; }
+    .viz-root .anomaly-dot{ width:9px; height:9px; border-radius:50%; margin-top:5px; flex:0 0 9px; }
+    .viz-root .anomaly-dot.CRITICAL{ background:var(--danger); }
+    .viz-root .anomaly-dot.WARNING{ background:var(--warn); }
+    .viz-root .anomaly-meta{ color:var(--text-muted); font-size:0.85em; }
+    .viz-root .empty-note{ color:var(--text-muted); font-size:0.88em; padding:10px 0; }
 </style>
 
 <div class="summary-grid">
@@ -33,21 +53,72 @@
 </div>
 
 <div class="viz-root">
-    <div style="display:grid;grid-template-columns:{{ '1fr 1fr' if dept_chart else '1fr' }};gap:20px;">
+    <div class="analytics-grid {{ 'viz-row-3' if dept_chart else 'viz-row-2' }}">
         <div class="chart-box">
-            <h4>Daily Activity (last 14 days)</h4>
-            <canvas id="trendChart"></canvas>
+            <h4>Flights Trend (last 14 days)</h4>
+            <canvas id="flightsTrendChart"></canvas>
         </div>
         {% if dept_chart %}
         <div class="chart-box">
-            <h4>Logs by Department</h4>
-            <canvas id="deptChart"></canvas>
+            <h4>Department Performance</h4>
+            <canvas id="deptPerfChart"></canvas>
         </div>
         {% endif %}
+        <div class="chart-box">
+            <h4>{{ donut_title }}</h4>
+            <canvas id="donutChart"></canvas>
+        </div>
+    </div>
+
+    <div class="analytics-grid viz-row-2">
+        <div class="chart-box">
+            <h4>Top Drones by Issues</h4>
+            {% if top_drones %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>MSN</th><th>Model</th>{% if top_drones[0].department is defined %}<th>Dept</th>{% endif %}
+                        <th>Flights</th><th>Issues</th><th>Last Flight</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for d in top_drones %}
+                    <tr>
+                        <td>{{ d.msn }}</td>
+                        <td>{{ d.model }}</td>
+                        {% if d.department is defined %}<td>{{ d.department }}</td>{% endif %}
+                        <td>{{ d.total_flights }}</td>
+                        <td><span class="badge badge-{{ 'CRITICAL' if d.issues > 1 else ('WARNING' if d.issues else 'PASS') }}">{{ d.issues }}</span></td>
+                        <td>{{ d.last_flight }}</td>
+                        <td><a class="btn secondary" style="padding:5px 12px;font-size:0.85em;" href="{{ url_for('dept.drone_detail', drone_id=d.drone_id) }}">View</a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-note">No analyzed flights yet.</div>
+            {% endif %}
+        </div>
+        <div class="chart-box">
+            <h4>Recent Anomalies</h4>
+            {% if anomalies %}
+            {% for a in anomalies %}
+            <div class="anomaly-item">
+                <span class="anomaly-dot {{ a.severity }}"></span>
+                <div>
+                    <div><strong>{{ a.msn }}</strong> &mdash; {{ a.message }}</div>
+                    <div class="anomaly-meta">{% if a.department %}{{ a.department }} &middot; {% endif %}{{ a.date }} &middot; <a href="{{ url_for('dept.view_report', upload_id=a.upload_id) }}">View report</a></div>
+                </div>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="empty-note">No anomalies recorded &mdash; all clear.</div>
+            {% endif %}
+        </div>
     </div>
 
     <div class="chart-box">
-        <h4>Takeoff Locations ({{ flight_summary.takeoffs|length }} flights with GPS)</h4>
+        <h4>Recent Flight Paths ({{ flight_summary.takeoffs|length }} flights with GPS)</h4>
         <div id="takeoffMap" style="height:360px;border-radius:10px;"></div>
     </div>
 </div>
@@ -57,35 +128,81 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function(){
-    const trendLabels = {{ trend|map(attribute=0)|map('string')|list|tojson }};
-    const trendValues = {{ trend|map(attribute=1)|list|tojson }};
+    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    const gridColor = theme === 'light' ? '#e2e8f0' : 'rgba(255,255,255,0.08)';
+    const tickColor = theme === 'light' ? '#64748b' : '#8b96ab';
+    Chart.defaults.color = tickColor;
+    Chart.defaults.borderColor = gridColor;
 
-    function barChart(canvasId, labels, values, color){
-        const el = document.getElementById(canvasId);
-        if(!el || typeof Chart === 'undefined') return;
-        new Chart(el, {
-            type: 'bar',
-            data: { labels: labels, datasets: [{ data: values, backgroundColor: color, borderRadius: 4, maxBarThickness: 28 }] },
+    const trend = {{ daily_trend|tojson }};
+    const trendEl = document.getElementById('flightsTrendChart');
+    if(trendEl && typeof Chart !== 'undefined'){
+        new Chart(trendEl, {
+            type: 'line',
+            data: {
+                labels: trend.map(t => t.date),
+                datasets: [
+                    { label: 'Total', data: trend.map(t => t.total), borderColor: '#2a78d6', backgroundColor: 'rgba(42,120,214,0.12)', tension: 0.35, fill: true, pointRadius: 2 },
+                    { label: 'Successful', data: trend.map(t => t.successful), borderColor: '#1baf7a', tension: 0.35, pointRadius: 2 },
+                    { label: 'With Anomalies', data: trend.map(t => t.anomalies), borderColor: '#e34948', tension: 0.35, pointRadius: 2 },
+                ],
+            },
             options: {
-                responsive: true,
-                animation: false,
-                plugins: { legend: { display: false } },
+                responsive: true, animation: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
                 scales: {
                     x: { grid: { display: false } },
-                    y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#e1e0d9' } },
+                    y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: gridColor } },
                 },
             },
         });
     }
 
-    barChart('trendChart', trendLabels, trendValues, '#2a78d6');
-
     {% if dept_chart %}
-    const deptLabels = {{ dept_chart|map(attribute='name')|list|tojson }};
-    const deptValues = {{ dept_chart|map(attribute='logs')|list|tojson }};
-    const deptColors = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
-    barChart('deptChart', deptLabels, deptValues, deptLabels.map((_, i) => deptColors[i % deptColors.length]));
+    const deptChart = {{ dept_chart|tojson }};
+    const deptEl = document.getElementById('deptPerfChart');
+    if(deptEl && typeof Chart !== 'undefined'){
+        new Chart(deptEl, {
+            type: 'bar',
+            data: {
+                labels: deptChart.map(d => d.name),
+                datasets: [
+                    { label: 'Flights', data: deptChart.map(d => d.flights), backgroundColor: '#2a78d6', borderRadius: 4 },
+                    { label: 'Anomalies', data: deptChart.map(d => d.anomalies), backgroundColor: '#e34948', borderRadius: 4 },
+                ],
+            },
+            options: {
+                indexAxis: 'y', responsive: true, animation: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+                scales: {
+                    x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: gridColor } },
+                    y: { grid: { display: false } },
+                },
+            },
+        });
+    }
     {% endif %}
+
+    const donutData = {{ donut_data|tojson }};
+    const donutEl = document.getElementById('donutChart');
+    const donutLabels = Object.keys(donutData);
+    const donutValues = Object.values(donutData);
+    const donutColors = { CRITICAL: '#e34948', WARNING: '#eda100', PASS: '#1baf7a', 'GPS Loss': '#2a78d6', 'Motor Issue': '#eb6834', Battery: '#eda100', Sensor: '#6250d6', Other: '#898781' };
+    if(donutEl && typeof Chart !== 'undefined' && donutValues.some(v => v > 0)){
+        new Chart(donutEl, {
+            type: 'doughnut',
+            data: {
+                labels: donutLabels,
+                datasets: [{ data: donutValues, backgroundColor: donutLabels.map((l, i) => donutColors[l] || ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4'][i % 5]), borderWidth: 0 }],
+            },
+            options: {
+                responsive: true, animation: false, cutout: '68%',
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+            },
+        });
+    } else if(donutEl){
+        donutEl.parentElement.insertAdjacentHTML('beforeend', '<div class="empty-note">No issues recorded yet.</div>');
+    }
 
     const takeoffs = {{ flight_summary.takeoffs|tojson }};
     const mapEl = document.getElementById('takeoffMap');
