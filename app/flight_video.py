@@ -64,7 +64,6 @@ def render_flight_video(report, output_path, fps=20, max_frames=240):
     zs_full = [p["z"] for p in track]
 
     x_range = meta["x_range"]
-    y_range = meta["y_range"]
     z_range = meta["z_range"]
     span = max(x_range[1] - x_range[0], z_range[1] - z_range[0], 10.0)
     arm_length = span * 0.025

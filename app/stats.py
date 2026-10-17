@@ -143,22 +143,6 @@ def person_aggregate(user, uploads):
     }
 
 
-def daily_counts(uploads, days=14):
-    """[(date, count), ...] for the last `days` days, oldest first, zero-
-    filled -- for a simple 'logs analyzed per day' admin view."""
-    from datetime import timedelta
-
-    today = datetime.now(timezone.utc).date()
-    buckets = {today - timedelta(days=i): 0 for i in range(days)}
-    for u in uploads:
-        if u.status != "completed" or not u.uploaded_at:
-            continue
-        d = u.uploaded_at.date()
-        if d in buckets:
-            buckets[d] += 1
-    return sorted(buckets.items())
-
-
 def _naive_now():
     # Matches today_start()/ytd_start(): naive UTC, since Upload.uploaded_at
     # round-trips from SQLite without tzinfo.

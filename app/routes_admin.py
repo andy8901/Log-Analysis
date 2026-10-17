@@ -2,14 +2,14 @@ import os
 import tempfile
 
 import pandas as pd
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 
 from app import db
 from app.decorators import admin_required
 from app.drive_sync import diagnostics as drive_sync_diagnostics
 from app.drive_sync import test_write as drive_sync_test_write
-from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
+from app.models import AuditLog, Department, Drone, Upload, User, slugify
 from app.stats import (
     active_drone_trend, drone_aggregate, flight_summary_aggregate,
     daily_flight_trend, issue_severity_breakdown, person_aggregate,
