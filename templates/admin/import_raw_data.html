@@ -37,14 +37,20 @@
     <h3 style="margin-top:28px;">Columns it looks for</h3>
     <p style="color:var(--text-muted);font-size:0.9em;">
         Matching is case-insensitive; a missing optional column just falls
-        back as noted.
+        back as noted. A standard Multilog export never names MSN/Model/
+        Department at all &mdash; the flight log itself has no idea which
+        drone it came from &mdash; so if none of those three are found by
+        name, whichever of the <strong>first 3 columns</strong> aren't part
+        of the standard extraction fields are used, in order, as MSN, then
+        Drone Model, then Department. Easiest: add one or more columns at
+        the very front of your sheet, named however you like.
     </p>
     <table>
         <thead><tr><th>Field</th><th>Column names it accepts</th><th>Required?</th></tr></thead>
         <tbody>
-            <tr><td>MSN</td><td>MSN, Drone MSN, Serial Number, Serial No, Serial</td><td>Yes &mdash; a row without one is skipped</td></tr>
-            <tr><td>Department</td><td>Department Name, Department</td><td>No &mdash; falls back to the dropdown above</td></tr>
-            <tr><td>Drone Model</td><td>Drone Model, Model</td><td>No &mdash; defaults to "UNKNOWN"</td></tr>
+            <tr><td>MSN</td><td>MSN, Drone MSN, MSN No, MSN Number, Serial Number, Serial No, Serial &mdash; or 1st extra front column</td><td>Yes &mdash; a row without one is skipped</td></tr>
+            <tr><td>Department</td><td>Department Name, Department &mdash; or 3rd extra front column</td><td>No &mdash; falls back to the dropdown above</td></tr>
+            <tr><td>Drone Model</td><td>Drone Model, Model &mdash; or 2nd extra front column</td><td>No &mdash; defaults to "UNKNOWN"</td></tr>
             <tr><td>Flight Date</td><td>Flight Date, Date</td><td>No</td></tr>
             <tr><td>Reported By</td><td>Reported By, Reporter</td><td>No</td></tr>
             <tr><td>Log Name</td><td>Log Name, Filename, File Name</td><td>No</td></tr>

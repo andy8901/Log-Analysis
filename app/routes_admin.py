@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 
@@ -212,12 +213,73 @@ def export_raw_data():
 
 
 _IMPORT_COLUMN_ALIASES = {
-    "msn": ("MSN", "Drone MSN", "Serial Number", "Serial No", "Serial"),
+    "msn": ("MSN", "Drone MSN", "MSN No", "MSN Number", "Serial Number", "Serial No", "Serial"),
     "model": ("Drone Model", "Model"),
     "department": ("Department Name", "Department"),
     "reported_by": ("Reported By", "Reporter"),
     "flight_date": ("Flight Date", "Date"),
     "filename": ("Log Name", "Filename", "File Name"),
+}
+
+# The exact field set multilog_analyzer.analyze_single_log() produces --
+# nothing extracted from the log itself ever includes which physical drone
+# (MSN) it came from, since a flight log has no idea how this app's fleet
+# registry is organized. Used to tell a genuinely new column the admin
+# prepended (MSN/Model/Department) apart from the log's own extracted
+# fields, positionally, when it isn't given a name this importer already
+# recognizes.
+_KNOWN_MULTILOG_COLUMNS = {
+    "Log Name", "Date", "Log Start Time", "Log End Time",
+    "Overall Endurance / Log Duration (sec)", "Arm Start Time", "Disarm End Time",
+    "Armed Flight Duration / Flight Endurance (sec)", "Flight Time (min)",
+    "Arm Events Count", "Disarm Events Count", "Flight Mode", "Mode Change Count",
+    "Takeoff Time", "Landing Time", "Takeoff Latitude", "Takeoff Longitude",
+    "Landing Latitude", "Landing Longitude", "Latitude", "Longitude", "GPS Fix Type",
+    "Avg Sat Count", "Min Sat Count", "Max Sat Count", "Max HDOP", "Avg HDOP",
+    "GPS Accuracy Horizontal", "GPS Accuracy Vertical", "GPS Ground Speed Avg",
+    "GPS Ground Speed Max", "GPS Course", "GPS Glitch Count", "GPS Glitch Duration (sec)",
+    "Distance Travelled (m)", "Max Home Distance (m)", "Max Baro Alt (m)",
+    "Avg Baro Alt (m)", "Max GPS Alt (m)", "Avg GPS Alt (m)", "Max Relative Altitude (m)",
+    "Avg Relative Altitude (m)", "Max Climb Rate (m/s)", "Max Descent Rate (m/s)",
+    "Avg Rangefinder (m)", "Min Rangefinder (m)", "Max Rangefinder (m)",
+    "Lidar / 6-Side Status", "Lidar (6-Side Status)", "Min Voltage (V)", "Max Voltage (V)",
+    "Avg Voltage (V)", "Avg Current (A)", "Max Current (A)", "Battery SOC (%)",
+    "Consumed Battery (mAh)", "Battery Temperature", "Min Cell Voltage", "Max Cell Voltage",
+    "Cell Voltage Difference", "Battery Resistance", "Max Power (W)", "Battery Failsafe",
+    "ax_avg", "ay_avg", "az_avg", "ax_max", "ay_max", "az_max",
+    "gx_avg", "gy_avg", "gz_avg", "gx_max", "gy_max", "gz_max",
+    "Vibration X Avg", "Vibration Y Avg", "Vibration Z Avg", "vib_avg", "vib_max", "vib_rms",
+    "IMU Clipping X", "IMU Clipping Y", "IMU Clipping Z",
+    "Roll Max", "Roll Min", "Pitch Max", "Pitch Min", "Yaw Max", "Yaw Min",
+    "roll_max", "pitch_max", "yaw_max",
+    "Desired Roll Max", "Desired Pitch Max", "Desired Yaw Max", "Desired Altitude Max",
+    "Roll Tracking Error", "Pitch Tracking Error", "Yaw Tracking Error",
+    "Altitude Tracking Error", "Actual Climb Rate", "Desired Climb Rate",
+    "Desired Ground Speed", "Actual Ground Speed",
+    "RC Roll Input", "RC Pitch Input", "RC Throttle Input", "RC Yaw Input", "RC RSSI",
+    "RC Link Quality", "RC Failsafe", "RC Signal Loss Count", "RC Signal Loss Duration (sec)",
+    "RC Override Events", "Motor Output Imbalance", "Motor/ESC Error Flags",
+    "ESC Voltage", "ESC Current", "ESC Temperature", "ESC RPM Error",
+    "Thrust Saturation Events", "Potential Thrust Loss",
+    "EKF Error Count", "EKF Reset Count", "EKF Lane Switches", "Active EKF Lane",
+    "EKF Source", "EKF Velocity Variance", "EKF Position Variance", "EKF Height Variance",
+    "EKF Compass Variance", "EKF Yaw Variance", "Yaw Reset Events", "Compass Error Count",
+    "Compass Variance", "Compass Health", "Failsafe Event Count", "Failsafe Type",
+    "Failsafe Duration (sec)", "RTL Events", "Auto Land Events",
+    "Emergency Stop / Disarm Events", "Telemetry RSSI", "Telemetry Link Quality",
+    "Telemetry Packet Loss", "Telemetry Link Loss Count", "Telemetry Link Loss Duration",
+    "GCS Connection Status", "GCS Latency", "Gimbal Pitch", "Gimbal Yaw",
+    "Camera Recording Status", "Payload Communication Status", "Payload Health",
+    "Sensor Health", "Critical Messages", "Error Messages", "Warning Messages",
+    "Event Messages", "Parameter Change Events", "Reboot Events", "Firmware Version",
+    "Flight Controller Version", "GPS Module / Firmware Information", "Total Error Count",
+    "Total Warning Count", "Critical Event Timestamp(s)", "Flight Duration (sec)",
+} | {
+    f"RFND_{i}_{stat} (m)" for i in range(6) for stat in ("Avg", "Max", "Min")
+} | {
+    f"Motor {n} RPM {stat}" for n in range(1, 5) for stat in ("Avg", "Min", "Max")
+} | {
+    f"Motor {n} Output {stat}" for n in range(1, 5) for stat in ("Avg", "Max")
 }
 
 
@@ -227,6 +289,34 @@ def _find_import_column(columns, field):
         if alias.lower() in lower_map:
             return lower_map[alias.lower()]
     return None
+
+
+_MSN_IN_FILENAME_RE = re.compile(r"MSN[_\s-]?(\d+)", re.I)
+
+
+def _extract_msn_from_filename(name):
+    """Some organizations' own log-naming convention embeds the drone's
+    MSN right in the filename (e.g. "MSN_064_log_23_2026-2-21...bin") --
+    a per-row fallback tried when there's no MSN column at all, named or
+    positional. Returns None (not a guess) for a filename that doesn't
+    match, e.g. ones filed under an incident folder name instead
+    ("Crash_log_...", "Testing Logs (...)_log_...")."""
+    if not name:
+        return None
+    m = _MSN_IN_FILENAME_RE.search(name)
+    return m.group(1) if m else None
+
+
+def _positional_fallback_columns(columns):
+    """When MSN/Model/Department aren't found by name, check whether the
+    admin instead prepended them as extra columns ahead of the standard
+    Multilog extraction fields (the admin's own stated convention: "first
+    2-3 columns will have msn no") -- any column among the first three that
+    isn't part of _KNOWN_MULTILOG_COLUMNS is assumed, in that order, to be
+    MSN, then Drone Model, then Department. Only ever fills in whichever of
+    these name-based matching didn't already find."""
+    extras = [c for c in columns[:3] if str(c).strip() not in _KNOWN_MULTILOG_COLUMNS]
+    return dict(zip(("msn", "model", "department"), extras))
 
 
 def _import_num(value):
@@ -333,19 +423,37 @@ def import_raw_data():
 
     columns = list(df.columns)
     msn_col = _find_import_column(columns, "msn")
-    if msn_col is None:
-        flash(
-            "No MSN column found (looked for: MSN, Drone MSN, Serial Number, "
-            "Serial No, Serial) -- add one so each row can be matched to a drone.",
-            "error",
-        )
-        return redirect(url_for("admin.import_raw_data"))
-
     model_col = _find_import_column(columns, "model")
     dept_col = _find_import_column(columns, "department")
     reported_col = _find_import_column(columns, "reported_by")
     date_col = _find_import_column(columns, "flight_date")
     filename_col = _find_import_column(columns, "filename")
+
+    # Fall back to position for whichever of MSN/Model/Department wasn't
+    # found by name: a standard Multilog export never names these (the
+    # flight log itself has no idea which drone it came from), so an admin
+    # who prepended them as extra columns may not have used a name this
+    # importer recognizes.
+    if msn_col is None or model_col is None or dept_col is None:
+        positional = _positional_fallback_columns(columns)
+        msn_col = msn_col or positional.get("msn")
+        model_col = model_col or positional.get("model")
+        dept_col = dept_col or positional.get("department")
+
+    # Last resort for MSN specifically: some organizations' own log-naming
+    # convention already embeds it in the filename (see
+    # _extract_msn_from_filename) -- tried per row below, so this only
+    # blocks the import outright when there's truly nothing to go on for
+    # *any* row.
+    if msn_col is None and filename_col is None:
+        flash(
+            "No MSN column found, and no Log Name/Filename column to extract one from "
+            "(e.g. \"MSN_064_log_23...\"). Add an MSN column (named MSN, Drone MSN, "
+            "Serial Number, etc., or as one of the first 3 columns), or a filename "
+            "column whose values embed MSN_<number>.",
+            "error",
+        )
+        return redirect(url_for("admin.import_raw_data"))
 
     dept_by_name = {d.name.strip().lower(): d for d in departments}
     fallback_dept = next((d for d in departments if d.id == fallback_dept_id), None)
@@ -355,9 +463,11 @@ def import_raw_data():
 
     for i, row in df.iterrows():
         row = row.to_dict()
-        msn = _import_text(row, msn_col)
+        msn = _import_text(row, msn_col) if msn_col else None
+        if not msn and filename_col:
+            msn = _extract_msn_from_filename(_import_text(row, filename_col))
         if not msn:
-            skipped.append(f"row {i + 2}: no MSN")
+            skipped.append(f"row {i + 2}: no MSN (not in a column, and not found as MSN_<number> in the filename)")
             continue
 
         department = fallback_dept
