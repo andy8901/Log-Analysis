@@ -66,6 +66,10 @@
         uploaded by {{ upload.user.full_name }} on {{ upload.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
     </h3>
 
+    {% if report.investigation %}
+    {% include "dept/_investigation.html" %}
+    {% endif %}
+
     <div class="summary-grid">
 
         <div class="metric-card status-{{ report.status }}">
@@ -262,6 +266,11 @@
         </details>
 
         <div style="margin-top:16px;">
+            {% if report.investigation %}
+            <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='incident') }}">
+                <button class="btn">Download Incident Report (Word, Neosky letterhead)</button>
+            </a>
+            {% endif %}
             <a href="{{ url_for('dept.export', upload_id=upload.id, fmt='word') }}">
                 <button class="btn">Download Word</button>
             </a>
@@ -274,10 +283,18 @@
         <p style="color:var(--text-body);">
             Record a root-cause conclusion before the Word/Excel/3D video downloads unlock.
         </p>
+        {% set suggested = None %}
+        {% if report.investigation and report.investigation.blame and report.investigation.verdict %}
+            {% set suggested = 'pilot_error' if report.investigation.blame.primary == 'human' else 'system_error' %}
+            <p style="background:var(--accent-light);color:var(--accent-600);padding:10px 14px;border-radius:10px;">
+                Suggested by the flight investigation: <strong>{{ report.investigation.blame.label }}</strong>
+                ({{ report.investigation.blame.sub }}, {{ report.investigation.blame.confidence }} confidence). It's pre-selected below &mdash; check the evidence above and change it if you disagree.
+            </p>
+        {% endif %}
         <form method="POST" action="{{ url_for('dept.set_conclusion', upload_id=upload.id) }}">
             {% for value, label in conclusion_choices %}
             <label style="display:block;margin-bottom:8px;cursor:pointer;">
-                <input type="radio" name="conclusion" value="{{ value }}" required> {{ label }}
+                <input type="radio" name="conclusion" value="{{ value }}" {{ 'checked' if value == suggested }} required> {{ label }}
             </label>
             {% endfor %}
             <textarea name="conclusion_note" placeholder="Optional note (add detail, especially for 'Other')" style="width:100%;min-height:70px;margin:10px 0;padding:10px;border-radius:8px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--text-strong);"></textarea>
@@ -633,6 +650,11 @@ if(charts.attitude_pitch && charts.attitude_pitch.t && charts.attitude_pitch.t.l
 
 const track = {{ track|tojson }};
 const trackMeta = {{ track_meta|tojson }};
+// The track uses z = north. In Three.js (right-handed, y up) north has to be -z, otherwise the path is drawn
+// mirrored east-west compared with a map, so flip it once here; headings below use the same convention.
+track.forEach(p => { p.z = -p.z; });
+(trackMeta.markers || []).forEach(m => { m.z = -m.z; });
+if (trackMeta.z_range) trackMeta.z_range = [-trackMeta.z_range[1], -trackMeta.z_range[0]];
 
 let scene, camera, renderer, controls, flownLine, droneGlyph, THREE;
 
@@ -661,8 +683,8 @@ function rotateVec(v, axis, angleDeg){
 
 function droneGlyphPoints(roll, pitch, yaw, armLength){
     const yawR = yaw * Math.PI / 180;
-    let forward = new THREE.Vector3(Math.sin(yawR), 0, Math.cos(yawR));
-    let right = new THREE.Vector3(Math.cos(yawR), 0, -Math.sin(yawR));
+    let forward = new THREE.Vector3(Math.sin(yawR), 0, -Math.cos(yawR));   // north = -z
+    let right = new THREE.Vector3(Math.cos(yawR), 0, Math.sin(yawR));
     forward = rotateVec(forward, right, pitch);
     right = rotateVec(right, forward, roll);
 
@@ -688,7 +710,9 @@ function init3D(OrbitControls){
     const [xMin, xMax] = trackMeta.x_range, [zMin, zMax] = trackMeta.z_range;
     const span = Math.max(xMax - xMin, zMax - zMin, 10);
     const cx = (xMin + xMax) / 2, cz = (zMin + zMax) / 2;
-    camera.position.set(cx + span * 0.7, span * 0.6 + 20, cz + span * 0.7);
+    // frame the whole flight, including its height
+    const hTop = Math.max(trackMeta.y_range[1], 1), frame = Math.max(span, hTop * 1.4);
+    camera.position.set(cx + frame * 0.75, hTop * 0.5 + frame * 0.75, cz + frame * 0.75);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(w, h);
@@ -696,18 +720,46 @@ function init3D(OrbitControls){
     container.appendChild(renderer.domElement);
 
     controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(cx, 0, cz);
+    controls.target.set(cx, hTop * 0.3, cz);
     controls.update();
 
     const grid = new THREE.GridHelper(span * 1.6, 20, 0x334155, 0x1e293b);
-    grid.position.set(cx, trackMeta.y_range[0] - 1, cz);
+    grid.position.set(cx, trackMeta.source === 'investigator' ? 0 : trackMeta.y_range[0] - 1, cz);
     scene.add(grid);
 
+    // Whole flight path, coloured by height (blue low -> orange high), with its shadow on the ground and
+    // thin posts down to the ground so height can be read from any angle.
     const fullPathPts = track.flatMap(p => [p.x, p.y, p.z]);
+    const yLo = trackMeta.y_range[0], yHi = Math.max(trackMeta.y_range[1], yLo + 1);
+    const cLo = new THREE.Color(0x38bdf8), cHi = new THREE.Color(0xf59e0b);
+    const fullCols = track.flatMap(p => { const c = cLo.clone().lerp(cHi, Math.min(1, Math.max(0, (p.y - yLo) / (yHi - yLo)))); return [c.r, c.g, c.b]; });
     const fullGeom = new THREE.BufferGeometry();
     fullGeom.setAttribute('position', new THREE.Float32BufferAttribute(fullPathPts, 3));
-    const fullLine = new THREE.Line(fullGeom, new THREE.LineBasicMaterial({ color: 0x475569 }));
+    fullGeom.setAttribute('color', new THREE.Float32BufferAttribute(fullCols, 3));
+    const fullLine = new THREE.Line(fullGeom, new THREE.LineBasicMaterial({ vertexColors: true }));
     scene.add(fullLine);
+    const groundY = trackMeta.source === 'investigator' ? 0 : trackMeta.y_range[0] - 1;
+    const shadowGeom = new THREE.BufferGeometry();
+    shadowGeom.setAttribute('position', new THREE.Float32BufferAttribute(track.flatMap(p => [p.x, groundY + 0.05, p.z]), 3));
+    scene.add(new THREE.Line(shadowGeom, new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.45 })));
+    const posts = [], every = Math.max(1, Math.floor(track.length / 60));
+    for (let i = 0; i < track.length; i += every) if (track[i].y - groundY > 2) posts.push(track[i].x, track[i].y, track[i].z, track[i].x, groundY, track[i].z);
+    const postGeom = new THREE.BufferGeometry();
+    postGeom.setAttribute('position', new THREE.Float32BufferAttribute(posts, 3));
+    scene.add(new THREE.LineSegments(postGeom, new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.18 })));
+    // labelled markers from the flight investigation: take-off, crash/landing, failsafes, farthest point
+    const MC = { accent: '#38bdf8', crit: '#ef4444', warn: '#f59e0b', ok: '#22c55e' };
+    (trackMeta.markers || []).forEach(m => {
+        const cv = document.createElement('canvas'), g = cv.getContext('2d'), fs = 28;
+        g.font = `600 ${fs}px sans-serif`; const w = Math.ceil(g.measureText(m.label).width) + 28; cv.width = w; cv.height = fs + 18;
+        g.font = `600 ${fs}px sans-serif`; g.fillStyle = 'rgba(15,23,42,0.9)'; g.fillRect(0, 0, w, cv.height);
+        g.strokeStyle = MC[m.color] || '#fff'; g.lineWidth = 4; g.strokeRect(2, 2, w - 4, cv.height - 4);
+        g.fillStyle = '#f1f5f9'; g.textBaseline = 'middle'; g.fillText(m.label, 14, cv.height / 2 + 1);
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, sizeAttenuation: false }));
+        sp.scale.set(0.032 * w / cv.height, 0.032, 1); sp.position.set(m.x, m.y + span * 0.04, m.z); sp.renderOrder = 10; scene.add(sp);
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.4, span * 0.006), 12, 12), new THREE.MeshBasicMaterial({ color: MC[m.color] || '#fff' }));
+        dot.position.set(m.x, m.y, m.z); scene.add(dot);
+    });
 
     flownLine = new THREE.Line(
         new THREE.BufferGeometry(),
