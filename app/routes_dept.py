@@ -12,6 +12,8 @@ from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
 from analyzer import process_log
+from incident_report import generate_incident_report
+from investigator import investigate
 from reports import generate_excel, generate_word_report
 
 from app import db
@@ -196,6 +198,7 @@ def upload():
 
     try:
         report = process_log(tmp_path, drone_model=drone_model or drone.model)
+        _attach_investigation(report, tmp_path, upload_row.id)
     except Exception as exc:
         current_app.logger.exception("Log processing failed for upload %s", upload_row.id)
         upload_row.status = "failed"
@@ -228,6 +231,31 @@ def upload():
     _sync_reports_to_drive(upload_row, report, department, drone)
 
     return redirect(url_for("dept.view_report", upload_id=upload_row.id))
+
+
+def _attach_investigation(report, log_path, upload_id):
+    """Best-effort: adds report["investigation"] -- the plain-language "what happened, and was it a human error or a
+    system error" analysis from investigator.py (.bin logs only). Never blocks or fails the upload."""
+    try:
+        inv = investigate(log_path)
+        if inv:
+            report["investigation"] = inv
+    except Exception:
+        current_app.logger.warning("flight investigation failed for upload %s", upload_id, exc_info=True)
+    return report
+
+
+def _ensure_investigation(upload_row, report):
+    """Reports analysed before the investigator existed get it computed once, from the archived log, on first view."""
+    if report.get("investigation") or not upload_row.archived_path:
+        return report
+    if not upload_row.archived_path.lower().endswith(".bin") or not os.path.exists(upload_row.archived_path):
+        return report
+    _attach_investigation(report, upload_row.archived_path, upload_row.id)
+    if report.get("investigation"):
+        upload_row.analysis.report_json = json.dumps(report)
+        db.session.commit()
+    return report
 
 
 def _extract_multilog_json(archived_path, upload_id):
@@ -267,17 +295,20 @@ def _sync_reports_to_drive(upload_row, report, department, drone):
         "date": upload_row.flight_date,
         "reported_by": upload_row.reported_by,
     }
-    for fmt, ext, generate in (
-        ("word", "docx", lambda p: generate_word_report(report, mission, p)),
-        ("xlsx", "xlsx", lambda p: generate_excel(report, p)),
-    ):
+    jobs = [
+        ("word", "docx", "Report", lambda p: generate_word_report(report, mission, p)),
+        ("xlsx", "xlsx", "Report", lambda p: generate_excel(report, p)),
+    ]
+    if report.get("investigation"):
+        jobs.append(("incident", "docx", "Incident_Report", lambda p: generate_incident_report(report, mission, p)))
+    for fmt, ext, suffix, generate in jobs:
         with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
             tmp_path = tmp.name
         try:
             generate(tmp_path)
             upload_to_drive(
                 tmp_path, department.name, drone.msn,
-                f"{upload_row.id}_{os.path.splitext(upload_row.original_filename)[0]}_Report.{ext}",
+                f"{upload_row.id}_{os.path.splitext(upload_row.original_filename)[0]}_{suffix}.{ext}",
             )
         except Exception:
             current_app.logger.warning(
@@ -321,7 +352,7 @@ def view_report(upload_id):
         )
         return redirect(url_for("dept.dashboard", department_id=upload_row.department_id))
 
-    report = upload_row.analysis.get_report()
+    report = _ensure_investigation(upload_row, upload_row.analysis.get_report())
     track, track_meta = build_track(report)
     return render_template(
         "dept/report_view.html", upload=upload_row, report=report,
@@ -370,25 +401,33 @@ def export(upload_id, fmt):
         flash("Record a conclusion (Pilot error / System error / Yet to decide) before downloading.", "error")
         return redirect(url_for("dept.view_report", upload_id=upload_id))
 
-    report = upload_row.analysis.get_report()
-    ext = "docx" if fmt == "word" else "xlsx"
+    if fmt not in ("word", "xlsx", "incident"):
+        abort(404)
+    report = _ensure_investigation(upload_row, upload_row.analysis.get_report())
+    if fmt == "incident" and not report.get("investigation"):
+        flash("The incident report needs a .bin dataflash log; this upload doesn't have one.", "error")
+        return redirect(url_for("dept.view_report", upload_id=upload_id))
+    ext = "xlsx" if fmt == "xlsx" else "docx"
 
     with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
-        if fmt == "word":
-            mission = {
-                "drone": upload_row.drone_model,
-                "msn": upload_row.msn_entered,
-                "date": upload_row.flight_date,
-                "reported_by": upload_row.reported_by,
-            }
+        mission = {
+            "drone": upload_row.drone_model,
+            "msn": upload_row.msn_entered,
+            "date": upload_row.flight_date,
+            "reported_by": upload_row.reported_by,
+        }
+        if fmt == "incident":
+            generate_incident_report(report, mission, tmp_path)
+        elif fmt == "word":
             generate_word_report(report, mission, tmp_path)
         else:
             generate_excel(report, tmp_path)
 
-        download_name = f"Neosky_Report_{upload_row.id}.{ext}"
+        download_name = (f"Neosky_Incident_Report_{upload_row.id}.docx" if fmt == "incident"
+                         else f"Neosky_Report_{upload_row.id}.{ext}")
         return send_file(tmp_path, as_attachment=True, download_name=download_name)
     finally:
         # send_file streams the file; it's safe to drop our reference once

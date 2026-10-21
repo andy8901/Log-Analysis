@@ -49,6 +49,31 @@ reports by guessing an ID.
   also captured once at upload time (best-effort) and stored, so this
   export and the richer dashboard metrics below don't need to re-parse
   every raw log on every request.
+- **Flight investigation** (`investigator.py`, `.bin` logs) — every report
+  page now opens with a plain-language investigation of the flight: a
+  **HUMAN ERROR / SYSTEM ERROR** verdict with its confidence, "in simple
+  words", what went wrong (with flight times), possible causes (each tagged
+  human or system, and as cause / trigger / contributing), why exactly it
+  went wrong, the systems checked and found working (which is what rules a
+  system error out), and corrective actions. It also detects how the flight
+  ended from the log's own evidence (take-off/touchdown from throttle,
+  barometer drift, stuck on an obstacle, free fall, crash check, impact),
+  and lists every flight figure against its healthy range. It runs
+  alongside `analyzer.py`/`rca.py`, which are unchanged; it's computed once
+  at upload and stored as `report["investigation"]` (older uploads get it
+  on first view, from the archived log). The verdict pre-selects the
+  matching option in the Conclusion form; a person still confirms it.
+- **Incident report on the Neosky letterhead** (`incident_report.py`) — a
+  Word download built on `assets/neosky_letterhead.docx`: about 1.5 pages
+  of verdict and explanation, then an annexure with all the flight data
+  explained (figures with healthy ranges, 3D and top-down path, coordinates,
+  timeline, health checks, charts, safety settings). Same conclusion gate
+  as the other downloads, and mirrored to Drive like them. Times are shown
+  in `REPORT_TZ` (default `Asia/Kolkata`).
+- **3D replay** now draws the whole path coloured by height with its ground
+  shadow, labels take-off / crash or landing / failsafes / farthest point,
+  frames the whole flight, and is no longer mirrored east-west (north was
+  drawn as +z).
 - **Conclusion required before download** — a report's Word/Excel/3D-video
   downloads stay locked until someone records a root-cause conclusion
   (Pilot error / System error / Yet to decide / Other, with an optional

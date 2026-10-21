@@ -32,6 +32,18 @@ def build_track(report):
     """Returns (track, meta). track is a list of dicts, one per gps_path
     point, in chronological order; meta carries the path's bounding size
     (for camera framing). Empty list if the log has no GPS fix."""
+    inv = report.get("investigation") or {}
+    if inv.get("track"):
+        # The investigator's track is already in local metres with the cos(latitude) correction, heights relative
+        # to the take-off point and corrected for barometer drift, and attitude aligned per sample.
+        track = [{k: p[k] for k in ("t", "x", "y", "z", "roll", "pitch", "yaw")} for p in inv["track"]]
+        for p in track:
+            for k in ("roll", "pitch", "yaw"):
+                p[k] = p[k] or 0.0
+        xs, ys, zs = [p["x"] for p in track], [p["y"] for p in track], [p["z"] for p in track]
+        return track, {"x_range": [min(xs), max(xs)], "y_range": [min(min(ys), 0), max(ys)], "z_range": [min(zs), max(zs)],
+                       "markers": inv.get("markers") or [], "source": "investigator"}
+
     path = report.get("gps_path") or []
     times = report.get("gps_path_time") or []
     headings = report.get("replay_headings") or []

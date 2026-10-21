@@ -1,0 +1,131 @@
+{# Flight investigation: plain-language verdict (human error or system error), what went wrong, causes, why,
+   corrective actions and the evidence. Data: report.investigation (investigator.py). #}
+{% set inv = report.investigation %}
+{% set R = inv.report %}
+{% set side = R.verdict_side %}
+<style>
+    .inv{ border:1px solid var(--card-border); border-radius:var(--radius-lg); padding:22px; margin:18px 0; background:var(--card-bg); }
+    .inv h2{ margin:0 0 4px; } .inv h3{ margin:18px 0 8px; font-size:0.85em; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); }
+    .inv-kind{ display:inline-block; font-size:0.72em; font-weight:700; letter-spacing:0.08em; padding:3px 9px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+    .inv-kind.crash,.inv-kind.log_end{ background:var(--danger-bg); color:var(--danger-ink); }
+    .inv-kind.hard_landing{ background:var(--warn-bg); color:var(--warn-ink); }
+    .inv-kind.normal{ background:var(--good-bg); color:var(--good-ink); }
+    .inv-verdict{ border-left:6px solid var(--vc); background:color-mix(in srgb, var(--vc) 14%, transparent); padding:12px 16px; border-radius:0 12px 12px 0; margin:12px 0; }
+    .inv-verdict b{ font-size:1.45em; color:var(--vc); letter-spacing:0.02em; }
+    .inv-verdict span{ display:block; color:var(--text-muted); font-size:0.9em; margin-top:2px; }
+    .inv-split{ display:flex; height:8px; border-radius:4px; overflow:hidden; margin-top:8px; max-width:420px; background:var(--table-border); }
+    .inv-simple{ font-size:1.02em; line-height:1.6; color:var(--text-strong); max-width:95ch; }
+    .inv table{ width:100%; border-collapse:collapse; font-size:0.92em; }
+    .inv td,.inv th{ padding:7px 9px; border-top:1px solid var(--table-border); text-align:left; vertical-align:top; }
+    .inv-sum th{ width:150px; color:var(--text-muted); font-weight:500; }
+    .inv ol{ margin:0; padding-left:22px; } .inv ol li{ margin:4px 0; }
+    .inv .t{ font-family:ui-monospace,Consolas,monospace; color:var(--accent); font-weight:600; margin-right:6px; }
+    .inv-role{ font-size:0.72em; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; padding:2px 7px; border-radius:4px; background:var(--table-border); color:var(--text-muted); white-space:nowrap; }
+    .inv-role.cause{ background:var(--danger-bg); color:var(--danger-ink); } .inv-role.trigger{ background:var(--warn-bg); color:var(--warn-ink); }
+    .inv-side-Human{ color:#e07a3f; font-weight:600; } .inv-side-System{ color:#8b7cf6; font-weight:600; }
+    .inv-ruled{ color:var(--text-muted); font-size:0.9em; }
+    .inv-grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; } @media (max-width:900px){ .inv-grid{ grid-template-columns:1fr; } }
+    .inv-dot{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; background:var(--text-muted); }
+    .inv-dot.crit{ background:var(--danger); } .inv-dot.warn{ background:var(--warn); } .inv-dot.ok{ background:var(--good); } .inv-dot.info{ background:var(--accent); }
+    .inv-check{ color:var(--danger); font-weight:700; }
+    .inv details summary{ cursor:pointer; color:var(--accent); margin:12px 0 6px; font-weight:600; }
+</style>
+
+<div class="inv" id="investigation">
+    <h2>{{ R.title }} <span class="inv-kind {{ R.kind }}">{{ R.kind_label|upper }}</span></h2>
+    <div style="color:var(--text-muted);font-size:0.9em;">Flight investigation from the log's own evidence{% if inv.flights_in_log and inv.flights_in_log > 1 %} &middot; the longest of {{ inv.flights_in_log }} flights in this log{% endif %}</div>
+
+    {% set vc = {'human':'#e07a3f','system':'#8b7cf6','none':'#16a34a','unknown':'#8b96ab'}[side] %}
+    <div class="inv-verdict" style="--vc:{{ vc }};">
+        <b>VERDICT: {{ R.verdict_word }}</b>
+        <span>{{ R.verdict_sub }}</span>
+        {% if inv.blame %}
+        <div class="inv-split" title="Human {{ inv.blame.split.human }}% / System {{ inv.blame.split.system }}%">
+            <i style="width:{{ inv.blame.split.human }}%;background:#e07a3f;"></i><i style="width:{{ inv.blame.split.system }}%;background:#8b7cf6;"></i>
+        </div>
+        {% endif %}
+    </div>
+
+    <h3>In simple words</h3>
+    <p class="inv-simple">{{ R.simple }}</p>
+
+    <table class="inv-sum">
+        {% for k, v in R.summary %}<tr><th>{{ k }}</th><td{% if loop.first %} style="font-weight:600;color:var(--text-strong);"{% endif %}>{{ v }}</td></tr>{% endfor %}
+    </table>
+
+    <div class="inv-grid">
+        <div>
+            {% if R.wrong %}
+            <h3>{{ R.wrong_title }}</h3>
+            <ol>{% for w in R.wrong %}<li>{% if w.t %}<span class="t">{{ w.t }}</span>{% endif %}{{ w.text }}</li>{% endfor %}</ol>
+            {% endif %}
+            {% if R.actions %}
+            <h3>Corrective actions</h3>
+            <ul>{% for a in R.actions %}<li>{{ a }}</li>{% endfor %}</ul>
+            {% endif %}
+        </div>
+        <div>
+            <h3>Why exactly it went wrong</h3>
+            <p style="line-height:1.55;">{{ R.why }}</p>
+            {% if R.ruled %}<p class="inv-ruled">{{ R.ruled }}</p>{% endif %}
+        </div>
+    </div>
+
+    {% if R.causes %}
+    <h3>Possible causes</h3>
+    <table>
+        <thead><tr><th>Error type</th><th>Role</th><th>Cause and evidence</th><th>When</th></tr></thead>
+        <tbody>
+        {% for c in R.causes %}
+        <tr>
+            <td class="inv-side-{{ c.side }}">{{ c.cat }}</td>
+            <td><span class="inv-role {{ c.role }}">{{ c.role }}</span></td>
+            <td><strong>{{ c.title }}.</strong> {{ c.why }}</td>
+            <td style="font-family:ui-monospace,Consolas,monospace;white-space:nowrap;">{{ c.t }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <div class="inv-ruled" style="margin-top:6px;">Cause = made the outcome happen &middot; Trigger = started the chain of events &middot; Contributing = made it worse.</div>
+    {% endif %}
+
+    <details>
+        <summary>Flight figures with healthy ranges ({{ R.data|selectattr(4, 'equalto', 'check')|list|length }} outside range)</summary>
+        <table>
+            <thead><tr><th>Measurement</th><th>Value</th><th>Healthy range</th><th>What it means</th></tr></thead>
+            <tbody>
+            {% for k, v, rng, mean, st in R.data %}
+            <tr><td><strong>{{ k }}</strong></td><td>{{ v }}{% if st == 'check' %} <span class="inv-check">CHECK</span>{% endif %}</td><td style="color:var(--text-muted);">{{ rng }}</td><td style="color:var(--text-muted);">{{ mean }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </details>
+
+    <details>
+        <summary>Health checks ({{ inv.checks|selectattr('sev', 'in', ['crit', 'warn'])|list|length }} problems or warnings)</summary>
+        <table><tbody>
+        {% for c in inv.checks %}
+            <tr><td style="white-space:nowrap;"><span class="inv-dot {{ c.sev }}"></span><strong>{{ c.title }}</strong></td><td>{{ c.text }}</td><td style="font-family:ui-monospace,Consolas,monospace;">{{ c.t }}</td></tr>
+        {% endfor %}
+        </tbody></table>
+    </details>
+
+    <details>
+        <summary>Timeline and key locations</summary>
+        <table>
+            <thead><tr><th>Flight time</th><th>Clock</th><th>Event</th></tr></thead>
+            <tbody>
+            {% for w in R.timeline %}<tr><td style="font-family:ui-monospace,Consolas,monospace;">{{ w.t }}</td><td>{{ w.clock }}</td><td{% if w.sev == 'crit' %} style="color:var(--danger);font-weight:600;"{% elif w.sev == 'warn' %} style="color:var(--warn);"{% endif %}>{{ w.text }}</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        <table style="margin-top:12px;">
+            <thead><tr><th>Point</th><th>Latitude, longitude</th><th>Altitude (sea level)</th><th>Flight time</th><th></th></tr></thead>
+            <tbody>
+            {% for l in inv.locations %}
+            <tr><td><strong>{{ l.name }}</strong></td><td style="font-family:ui-monospace,Consolas,monospace;">{{ '%.7f'|format(l.lat) }}, {{ '%.7f'|format(l.lon) }}</td><td>{{ l.alt }} m</td><td>{{ l.t }}</td>
+                <td><a href="https://www.google.com/maps/search/?api=1&query={{ l.lat }},{{ l.lon }}" target="_blank" rel="noopener">Map</a></td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </details>
+</div>
