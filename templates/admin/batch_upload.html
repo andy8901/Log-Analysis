@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Batch Upload (Folder){% endblock %}
+{% block content %}
+<div class="card" style="max-width:720px;margin:0 auto;">
+    <h1>Batch Upload (Folder)</h1>
+    <p style="color:var(--text-body);">
+        Run a whole folder of raw flight logs (.bin/.log/.tlog) for <strong>one drone</strong> through the same
+        diagnostic pipeline as a normal department upload, in one go &mdash; each file becomes its own flight with a
+        full report, 3D replay where supported, and flight-investigator analysis, exactly as if it had been uploaded
+        one at a time.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;">
+
+            <div class="input-group">
+                <label>Department</label>
+                <select name="department_id" required>
+                    <option value="">— select —</option>
+                    {% for d in departments %}
+                    <option value="{{ d.id }}">{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label>Drone Model</label>
+                <select name="drone">
+                    {% for m in model_choices %}
+                    <option value="{{ m }}">{{ m }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label>MSN Number</label>
+                <input type="text" name="msn" required>
+            </div>
+
+            <div class="input-group">
+                <label>Flight / Incident Date (optional, applied to every file)</label>
+                <input type="date" name="date">
+            </div>
+
+            <div class="input-group">
+                <label>Reported By</label>
+                <input type="text" name="reported_by" value="{{ current_user.full_name }}">
+            </div>
+
+            <div class="input-group">
+                <label>Log Folder</label>
+                <input type="file" name="log_files" webkitdirectory directory multiple accept=".bin,.log,.tlog" required>
+            </div>
+
+        </div>
+
+        <br>
+        <center>
+            <button class="btn" type="submit">Process Folder</button>
+        </center>
+    </form>
+
+    <p style="color:var(--text-muted);font-size:0.9em;margin-top:20px;">
+        All files in the selected folder are treated as logs for the same MSN &mdash; this mirrors how a folder of
+        logs pulled off one aircraft's SD card is normally organized. To process logs for several drones, repeat
+        this per drone. Each file still has to pass the usual checks (readable log, valid type); any that fail are
+        listed after submitting, and the rest still complete.
+    </p>
+</div>
+{% endblock %}

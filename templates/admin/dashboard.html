@@ -4,6 +4,19 @@
 <div class="card">
     <h1 style="text-align:center;">Organization-Wide Overview</h1>
 
+    <form method="GET" style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+        <label for="droneFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Drone:</label>
+        <select name="drone_id" id="droneFilterSelect" onchange="this.form.submit()" style="max-width:320px;">
+            <option value="">All drones (organization-wide)</option>
+            {% for d in all_drones %}
+            <option value="{{ d.id }}" {{ 'selected' if selected_drone and selected_drone.id == d.id }}>{{ d.msn }} &middot; {{ d.model }} &middot; {{ d.department.name }}</option>
+            {% endfor %}
+        </select>
+        {% if selected_drone %}
+        <a class="btn secondary" style="padding:5px 12px;font-size:0.85em;" href="{{ url_for('admin.dashboard') }}">Clear</a>
+        {% endif %}
+    </form>
+
     <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:24px;font-size:0.85em;color:var(--text-muted);">
         <span style="display:inline-flex;align-items:center;gap:6px;">
             <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ 'var(--good)' if drive_sync.configured and drive_sync.exists else ('var(--warn)' if drive_sync.configured else 'var(--slate-300)') }};"></span>
@@ -45,11 +58,81 @@
         <div class="metric-card"><h4>Departments</h4><h2>{{ totals.departments }}</h2><span class="metric-trend flat">No change</span></div>
         <div class="metric-card"><h4>Users</h4><h2>{{ totals.users }}</h2></div>
         <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ totals.logs_today }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#7f1d1d;' if totals.crashes_total }}"><h4>Crashes Till Today</h4><h2>{{ totals.crashes_total }}</h2>{% if totals.crashes_today %}<span class="metric-trend down">{{ totals.crashes_today }} today</span>{% endif %}</div>
     </div>
+    {% if selected_drone %}
+    <p style="text-align:center;color:var(--text-muted);font-size:0.9em;margin-top:-10px;">
+        Showing analytics for <strong>{{ selected_drone.msn }} &middot; {{ selected_drone.model }}</strong> ({{ selected_drone.department.name }}) only &mdash; totals above stay organization-wide.
+    </p>
+    {% endif %}
 
     {% set donut_data = severity %}
     {% set donut_title = 'Issue Severity' %}
     {% include "_flight_summary.html" %}
+
+    <h2>Flight Investigator Insights</h2>
+    <p style="color:var(--text-muted);font-size:0.85em;margin-top:-8px;">
+        From the per-flight investigator (.bin logs only) &mdash; verdicts, failsafe timing, and issue counts it has
+        already computed{% if selected_drone %} for {{ selected_drone.msn }}{% endif %}. Flights it hasn't analyzed yet
+        aren't counted here.
+    </p>
+    <div class="summary-grid">
+        <div class="metric-card"><h4>Avg Flight Time</h4><h2>{{ inv_stats.avg_airtime_min if inv_stats.avg_airtime_min is not none else '—' }}<small> min</small></h2></div>
+        <div class="metric-card"><h4>Avg Max Distance</h4><h2>{{ inv_stats.avg_max_distance_m if inv_stats.avg_max_distance_m is not none else '—' }}<small> m</small></h2></div>
+        <div class="metric-card"><h4>Avg Max Altitude</h4><h2>{{ inv_stats.avg_max_altitude_m if inv_stats.avg_max_altitude_m is not none else '—' }}<small> m</small></h2></div>
+        <div class="metric-card"><h4>Avg Flight Time at Battery Failsafe</h4><h2>{{ inv_stats.avg_airtime_at_battery_fs_min if inv_stats.avg_airtime_at_battery_fs_min is not none else '—' }}<small> min</small></h2></div>
+        <div class="metric-card"><h4>Avg Distance at GCS Failsafe</h4><h2>{{ inv_stats.avg_distance_at_gcs_fs_m if inv_stats.avg_distance_at_gcs_fs_m is not none else '—' }}<small> m</small></h2></div>
+        <div class="metric-card"><h4>Avg Distance at RC Failsafe</h4><h2>{{ inv_stats.avg_distance_at_rc_fs_m if inv_stats.avg_distance_at_rc_fs_m is not none else '—' }}<small> m</small></h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.thrust_issue_flights }}"><h4>Potential Thrust Losses</h4><h2>{{ inv_stats.thrust_issue_flights }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.motor_issue_flights }}"><h4>Motor Issues</h4><h2>{{ inv_stats.motor_issue_flights }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.gps_issue_flights }}"><h4>GPS Issues</h4><h2>{{ inv_stats.gps_issue_flights }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.ekf_issue_flights }}"><h4>EKF Issues</h4><h2>{{ inv_stats.ekf_issue_flights }}</h2></div>
+        <div class="metric-card"><h4>System Errors</h4><h2>{{ inv_stats.system_error_flights }}</h2></div>
+        <div class="metric-card"><h4>Pilot/Human Errors</h4><h2>{{ inv_stats.human_error_flights }}</h2></div>
+        <div class="metric-card"><h4>Logs Yet to Decide</h4><h2>{{ conclusion_counts.undetermined }}</h2></div>
+        <div class="metric-card"><h4>Logs Marked Pilot Error</h4><h2>{{ conclusion_counts.pilot_error }}</h2></div>
+        <div class="metric-card"><h4>Logs Marked System Error</h4><h2>{{ conclusion_counts.system_error }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#7f1d1d;' if inv_stats.crash_count }}"><h4>Crashes Observed</h4><h2>{{ inv_stats.crash_count }}</h2></div>
+    </div>
+    {% if inv_stats.scored_flights == 0 %}
+    <p style="color:var(--text-muted);font-size:0.85em;margin-top:-16px;">
+        No flights in this view have investigator data yet &mdash; it's computed automatically for new .bin uploads,
+        and the first time an older .bin upload's report is viewed.
+    </p>
+    {% endif %}
+    {% if not (today_highlight.crash or today_highlight.critical) %}
+    <p style="color:var(--text-muted);font-size:0.9em;">Highlight of the day: no crashes or critical flights reported today.</p>
+    {% else %}
+    <p style="font-size:0.9em;">
+        <strong>Highlight of the day:</strong>
+        {% if today_highlight.crash %}a crash was recorded on <strong>{{ today_highlight.crash.msn }}</strong> ({{ today_highlight.crash.department }}).{% elif today_highlight.critical %}<strong>{{ today_highlight.critical.msn }}</strong> ({{ today_highlight.critical.department }}) came back CRITICAL: {{ today_highlight.critical.message }}{% endif %}
+    </p>
+    {% endif %}
+
+    <div class="viz-root">
+        <div class="chart-box" style="max-width:420px;margin:0 auto 28px;">
+            <h4>Issue Breakdown</h4>
+            <canvas id="issueBreakdownChart"></canvas>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script>
+    (function(){
+        const data = {{ issue_breakdown|tojson }};
+        const el = document.getElementById('issueBreakdownChart');
+        const labels = Object.keys(data), values = Object.values(data);
+        const colors = { 'Thrust Loss': '#eb6834', 'Motor': '#e34948', 'GPS': '#2a78d6', 'EKF': '#6250d6', 'Battery Failsafe': '#eda100', 'GCS/RC Failsafe': '#e87ba4', 'Crash': '#7f1d1d' };
+        if(el && typeof Chart !== 'undefined' && values.some(v => v > 0)){
+            new Chart(el, {
+                type: 'doughnut',
+                data: { labels, datasets: [{ data: values, backgroundColor: labels.map(l => colors[l] || '#898781'), borderWidth: 0 }] },
+                options: { responsive: true, animation: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } },
+            });
+        } else if(el){
+            el.parentElement.insertAdjacentHTML('beforeend', '<div class="empty-note">No investigator-tagged issues in this view yet.</div>');
+        }
+    })();
+    </script>
 
     <h2>By Department</h2>
     <table>

@@ -151,17 +151,41 @@ def upload():
     reported_by = request.form.get("reported_by", "").strip()
 
     file = request.files.get("log_file")
+    try:
+        upload_row = process_and_save_log(
+            file, department, drone_model, msn, flight_date, reported_by, current_user,
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 400
+
+    if upload_row.status == "failed":
+        flash(f"Processing failed: {upload_row.error_message}", "error")
+        return redirect(url_for("dept.dashboard"))
+
+    return redirect(url_for("dept.view_report", upload_id=upload_row.id))
+
+
+def process_and_save_log(file, department, drone_model, msn, flight_date, reported_by, user):
+    """The single-log processing pipeline -- validate, save to a tmp path,
+    resolve/create the drone, run analyzer.py + investigator.py +
+    multilog_analyzer.py (all untouched analysis logic, only ever read
+    from), archive the raw log, persist Upload + AnalysisResult, and sync
+    to Drive. Shared by a department's own upload() above and an admin's
+    batch Multilog folder upload (routes_admin.import_logs_batch), so this
+    pipeline only has one copy to keep correct.
+
+    Raises ValueError for a validation problem (bad/missing file, no MSN)
+    -- nothing is written to the DB in that case. Otherwise always returns
+    the Upload row: its status is "completed" on success or "failed" if
+    processing itself raised (still saved, so it shows up as a visible
+    failure instead of silently vanishing)."""
     if not file or not file.filename:
-        flash("No file selected", "error")
-        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 400
-
+        raise ValueError("No file selected")
     if not allowed_log_file(file.filename):
-        flash("Invalid file type -- only .bin, .log, .tlog are accepted", "error")
-        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 400
-
+        raise ValueError("Invalid file type -- only .bin, .log, .tlog are accepted")
     if not msn:
-        flash("MSN is required so this log can be attached to a drone record", "error")
-        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 400
+        raise ValueError("MSN is required so this log can be attached to a drone record")
 
     filename = secure_filename(file.filename)
     # uuid4, not pid: a retried/resubmitted upload of the same filename must
@@ -184,7 +208,7 @@ def upload():
 
     upload_row = Upload(
         department_id=department.id,
-        user_id=current_user.id,
+        user_id=user.id,
         drone_id=drone.id,
         original_filename=filename,
         drone_model=drone_model,
@@ -205,8 +229,7 @@ def upload():
         upload_row.error_message = str(exc)
         db.session.commit()
         remove_with_retry(tmp_path)
-        flash(f"Processing failed: {exc}", "error")
-        return redirect(url_for("dept.dashboard"))
+        return upload_row
 
     archived_path = archive_upload(tmp_path, filename, department.slug, drone.msn, upload_row.id)
 
@@ -224,13 +247,13 @@ def upload():
         **derive_result_metrics(report),
     )
     db.session.add(analysis)
-    AuditLog.record(current_user, "upload_analyzed", f"upload={upload_row.id} drone={drone.msn}")
+    AuditLog.record(user, "upload_analyzed", f"upload={upload_row.id} drone={drone.msn}")
     db.session.commit()
 
     upload_to_drive(archived_path, department.name, drone.msn, os.path.basename(archived_path), kind="Raw Logs")
     _sync_reports_to_drive(upload_row, report, department, drone)
 
-    return redirect(url_for("dept.view_report", upload_id=upload_row.id))
+    return upload_row
 
 
 def _attach_investigation(report, log_path, upload_id):
