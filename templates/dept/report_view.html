@@ -7,60 +7,62 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
 <style>
-    .summary-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin:20px 0; }
-    .metric-card{ background:#0f172a; color:white; padding:20px; border-radius:16px; text-align:center; }
-    .metric-card h4{ margin:0 0 6px 0; font-size:0.8em; opacity:0.8; }
-    .metric-card h2{ margin:0; font-size:1.4em; }
-    .metric-card small{ opacity:0.7; }
-    .status-PASS{ background:#166534; }
-    .status-WARNING{ background:#92400e; }
-    .status-CRITICAL{ background:#991b1b; }
+    /* .summary-grid/.metric-card/.badge are already styled app-wide by
+       base.html -- only status-specific additions and genuinely new
+       elements live here, so this page matches the rest of the app
+       (dashboard, drone detail, ...) instead of carrying its own
+       pre-redesign look. */
+    .status-PASS{ background:var(--good); }
+    .status-WARNING{ background:var(--warn); }
+    .status-CRITICAL{ background:var(--danger); }
     .alert-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:16px 0; }
     @media (max-width:700px){ .alert-grid{ grid-template-columns:1fr; } }
-    .alert-section{ padding:14px 16px; border-radius:12px; font-size:0.92em; }
-    .alert-section.severe{ background:#fee2e2; color:#991b1b; }
-    .alert-section.warn{ background:#fef3c7; color:#92400e; }
+    .alert-section{ padding:14px 16px; border-radius:var(--radius-md); font-size:0.92em; }
+    .alert-section.severe{ background:var(--danger-bg); color:var(--danger-ink); }
+    .alert-section.warn{ background:var(--warn-bg); color:var(--warn-ink); }
+    .alert-section h3, .alert-section p{ color:inherit; }
     .alert-section h3{ margin:0 0 8px 0; font-size:1em; }
     .alert-section li{ margin:4px 0; }
-    .conclusion-box{ background:#eff6ff; color:#1e3a8a; padding:20px; border-radius:12px; margin:20px 0; line-height:1.6; }
-    .info-box{ background:#f8fafc; border:1px solid #e2e8f0; padding:16px 20px; border-radius:12px; margin:16px 0; }
-    .rca-box{ background:#f8fafc; border:1px solid #e2e8f0; border-left:6px solid #64748b; padding:20px; border-radius:12px; margin:20px 0; line-height:1.6; }
-    .rca-box.crash{ background:#fef2f2; border-left-color:#dc2626; }
-    .rca-box.warning{ background:#fffbeb; border-left-color:#d97706; }
-    .rca-box.normal{ background:#f0fdf4; border-left-color:#16a34a; }
+    .conclusion-box{ background:var(--accent-light); color:var(--accent-600); padding:20px; border-radius:var(--radius-md); margin:20px 0; line-height:1.6; }
+    .conclusion-box h3, .conclusion-box p{ color:inherit; }
+    .info-box{ background:var(--card-bg); border:1px solid var(--card-border); padding:16px 20px; border-radius:var(--radius-md); margin:16px 0; }
+    .rca-box{ background:var(--card-bg); border:1px solid var(--card-border); border-left:6px solid var(--slate-500); padding:20px; border-radius:var(--radius-md); margin:20px 0; line-height:1.6; }
+    .rca-box.crash{ background:var(--danger-bg); color:var(--danger-ink); border-left-color:var(--danger); }
+    .rca-box.warning{ background:var(--warn-bg); color:var(--warn-ink); border-left-color:var(--warn); }
+    .rca-box.normal{ background:var(--good-bg); color:var(--good-ink); border-left-color:var(--good); }
+    .rca-box h3, .rca-box p, .rca-box td{ color:inherit; }
     .rca-badges{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 16px; }
-    .badge{ display:inline-block; padding:4px 12px; border-radius:999px; font-size:0.82em; font-weight:bold; color:white; background:#64748b; }
-    .badge-CRITICAL, .badge-CONFIRMED_CRASH{ background:#b91c1c; }
+    .badge-CRITICAL, .badge-CONFIRMED_CRASH{ background:var(--danger); }
     .badge-HIGH, .badge-PROBABLE_CRASH{ background:#dc2626; }
-    .badge-MEDIUM, .badge-POSSIBLE_LOSS_OF_CONTROL{ background:#d97706; }
+    .badge-MEDIUM, .badge-POSSIBLE_LOSS_OF_CONTROL{ background:var(--warn); }
     .badge-LOW, .badge-WARNING{ background:#ca8a04; }
-    .badge-NONE, .badge-NORMAL{ background:#16a34a; }
+    .badge-NONE, .badge-NORMAL{ background:var(--good); }
     .rca-box table{ margin:10px 0 6px; }
     .rca-box .category-col{ font-weight:bold; white-space:nowrap; }
-    .rca-box .role-primary{ color:#b91c1c; font-weight:bold; }
-    .rca-box .role-preceding{ color:#92400e; }
-    .rca-box .role-secondary{ color:#334155; }
-    .rca-disclaimer{ font-size:0.82em; color:#64748b; margin-top:14px; font-style:italic; }
+    .rca-box .role-primary{ color:var(--danger); font-weight:bold; }
+    .rca-box .role-preceding{ color:var(--warn-ink); }
+    .rca-box .role-secondary{ color:var(--text-body); }
+    .rca-disclaimer{ font-size:0.82em; color:var(--text-muted); margin-top:14px; font-style:italic; }
     .timeline-wrap{ max-height:400px; overflow-y:auto; }
-    .type-tag{ font-family:monospace; font-size:0.85em; padding:2px 8px; border-radius:6px; background:#e2e8f0; }
-    .type-MODE{ background:#dbeafe; }
-    .type-ERR{ background:#fee2e2; }
-    .type-INCIDENT{ background:#fecaca; font-weight:bold; }
-    .type-CAM{ background:#dcfce7; }
+    .type-tag{ font-family:ui-monospace,Consolas,monospace; font-size:0.85em; padding:2px 8px; border-radius:6px; background:var(--slate-200); color:#0f172a; }
+    .type-MODE{ background:#dbeafe; color:#0f172a; }
+    .type-ERR{ background:#fee2e2; color:#0f172a; }
+    .type-INCIDENT{ background:#fecaca; color:#0f172a; font-weight:bold; }
+    .type-CAM{ background:#dcfce7; color:#0f172a; }
     .chart-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:24px; margin:20px 0 30px; }
-    .chart-box{ border:1px solid #e2e8f0; border-radius:14px; padding:16px; }
-    .chart-box h4{ margin:0 0 10px 0; }
-    .replay-controls{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; background:#0f172a; color:white; padding:14px 20px; border-radius:14px; margin:16px 0; }
-    .replay-controls select{ padding:6px 10px; border-radius:8px; }
+    .chart-box{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:var(--radius-lg); padding:16px; }
+    .chart-box h4{ margin:0 0 10px 0; color:var(--text-strong); }
+    .replay-controls{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; background:var(--navy-900); color:white; padding:14px 20px; border-radius:var(--radius-lg); margin:16px 0; }
+    .replay-controls select{ padding:6px 10px; border-radius:8px; font-family:var(--font); }
     .replay-controls input[type=range]{ flex:1; min-width:200px; }
-    .replay-time{ font-family:monospace; min-width:110px; }
-    .icon-btn{ background:#0284c7; color:white; border:none; width:40px; height:40px; border-radius:50%; cursor:pointer; font-size:1em; }
+    .replay-time{ font-family:ui-monospace,Consolas,monospace; min-width:110px; }
+    .icon-btn{ background:var(--accent); color:white; border:none; width:40px; height:40px; border-radius:50%; cursor:pointer; font-size:1em; }
 </style>
 
 <div class="card">
 
     <h1 style="text-align:center;">{{ upload.original_filename }}</h1>
-    <h3 style="text-align:center;color:#64748b;">
+    <h3 style="text-align:center;color:var(--text-muted);">
         {{ upload.drone.msn if upload.drone else upload.msn_entered }} &middot;
         {{ upload.drone_model }} &middot; {{ upload.department.name }} &middot;
         uploaded by {{ upload.user.full_name }} on {{ upload.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
@@ -121,10 +123,12 @@
 
     </div>
 
-    {% if report.summary.home_lat is not none and report.summary.home_lon is not none %}
+    {% if not report.investigation and report.summary.home_lat is not none and report.summary.home_lon is not none %}
+    {# Covered by the flight investigation's own "Timeline and key locations" (with map links) when that's
+       present above -- shown here only as a fallback for logs it hasn't analyzed (.log/.tlog, or not yet backfilled). #}
     <div class="info-box">
         <h3 style="margin-top:0;">Takeoff Location</h3>
-        <p style="color:#64748b;margin-bottom:12px;">
+        <p style="color:var(--text-muted);margin-bottom:12px;">
             Coordinates: <strong>{{ report.summary.home_lat }}, {{ report.summary.home_lon }}</strong>
             <span style="font-size:0.85em;">(first GPS fix in the log)</span>
         </p>
@@ -133,7 +137,7 @@
     {% endif %}
 
     <div class="conclusion-box">
-        <h3>Conclusion</h3>
+        <h3>Automated Assessment</h3>
         <ul>
         {% for line in report.conclusion %}
             <li>{{ line }}</li>
@@ -141,7 +145,9 @@
         </ul>
     </div>
 
-    {% if report.rca %}
+    {% if not report.investigation and report.rca %}
+    {# Covered by the flight investigation's own cause analysis ("Why exactly it went wrong" / "Possible
+       causes") above when that's present -- shown here only as a fallback for logs it hasn't analyzed. #}
     {% set rca = report.rca %}
     <div class="rca-box {{ 'crash' if rca.incident_level in ['CONFIRMED_CRASH', 'PROBABLE_CRASH'] else ('warning' if rca.incident_level in ['POSSIBLE_LOSS_OF_CONTROL', 'WARNING'] else 'normal') }}">
         <h3>Root-Cause Analysis</h3>
@@ -150,7 +156,7 @@
             <span class="badge badge-{{ rca.incident_level }}">Incident: {{ rca.incident_level.replace('_', ' ')|title }}</span>
             <span class="badge badge-{{ rca.crash_confidence }}">Crash Confidence: {{ rca.crash_confidence }}</span>
             {% if rca.root_cause %}
-            <span class="badge" style="background:#0f172a;">Primary Cause Confidence: {{ rca.root_cause.confidence }}</span>
+            <span class="badge" style="background:var(--navy-900);">Primary Cause Confidence: {{ rca.root_cause.confidence }}</span>
             {% endif %}
         </div>
 
@@ -404,7 +410,7 @@
     <br><br>
 
     <h2>Flight Path (3D)</h2>
-    <p style="color:#64748b;font-size:0.9em;">
+    <p style="color:var(--text-muted);font-size:0.9em;">
         Drag to rotate, scroll to zoom. The red cross marks the drone's
         position and actual roll/pitch/yaw at the current replay time.
     </p>
@@ -434,6 +440,9 @@
 
     <br><br>
 
+    {% if not report.investigation %}
+    {# Covered by the flight investigation's own "Timeline and key locations" above when that's present --
+       shown here only as a fallback for logs it hasn't analyzed (.log/.tlog, or not yet backfilled). #}
     <h2>Event Timeline</h2>
     <p>Every mode change, decoded error, system message, and possible-crash flag, in chronological order. Flight modes are shown by name, not number, and times are shown as mm:ss.</p>
 
@@ -445,7 +454,7 @@
         <tbody>
         {% for e in report.timeline %}
             <tr>
-                <td>{{ e.t_min }}</td>
+                <td style="font-family:ui-monospace,Consolas,monospace;">{{ e.t_min }}</td>
                 <td><span class="type-tag type-{{ e.type }}">{{ e.type }}</span></td>
                 <td>{{ e.text }}</td>
             </tr>
@@ -453,6 +462,7 @@
         </tbody>
     </table>
     </div>
+    {% endif %}
 
 </div>
 
@@ -471,8 +481,8 @@ const homeLon = {{ report.summary.home_lon|tojson }};
     }
     try {
         const map = L.map('takeoffMap').setView([homeLat, homeLon], 16);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: 'OpenStreetMap', maxZoom: 21,
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Esri World Imagery', maxZoom: 20,
         }).addTo(map);
         L.marker([homeLat, homeLon]).addTo(map)
             .bindPopup(`Takeoff<br>${homeLat}, ${homeLon}`)
