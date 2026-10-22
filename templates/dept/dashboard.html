@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ department.name }} Dashboard{% endblock %}
 {% block content %}
+{% set hero_title = department.name ~ " Dashboard" %}
+{% set hero_sub = ("Your own uploads: " if own_only else "All of this department's uploads: ") ~ "what was flown, what went wrong, and whose error it was." %}
+{% set hero_chips = [summary.total_drones ~ (" drone" if summary.total_drones == 1 else " drones"), summary.completed ~ (" flight analysed" if summary.completed == 1 else " flights analysed"), ov.kpi.crashes ~ (" crash" if ov.kpi.crashes == 1 else " crashes")] %}
+{% include "_hero.html" %}
 <div class="card">
-    <h1 style="text-align:center;">{{ department.name }} Dashboard</h1>
     {% if own_only %}
     <p style="text-align:center;color:#64748b;">
         Showing your own uploads only &mdash; individual activity is private;
@@ -10,7 +13,11 @@
     </p>
     {% endif %}
 
-    <div class="summary-grid">
+    <style>
+        .kpi4{ grid-template-columns:repeat(4, minmax(0, 1fr)); }
+        @media (max-width:1000px){ .kpi4{ grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+    </style>
+    <div class="summary-grid kpi4">
         <div class="metric-card">
             <h4>Log Uploads</h4><h2>{{ summary.total_logs }}</h2>
             {% if trends.uploads is not none %}<span class="metric-trend {{ 'up' if trends.uploads >= 0 else 'down' }}">{{ '+' if trends.uploads >= 0 }}{{ trends.uploads }}% <small>vs last 7 days</small></span>{% endif %}
@@ -19,11 +26,26 @@
             <h4>Flights Analyzed</h4><h2>{{ summary.completed }}</h2>
             {% if trends.flights is not none %}<span class="metric-trend {{ 'up' if trends.flights >= 0 else 'down' }}">{{ '+' if trends.flights >= 0 }}{{ trends.flights }}% <small>vs last 7 days</small></span>{% endif %}
         </div>
-        <div class="metric-card"><h4>Drones in Fleet</h4><h2>{{ summary.total_drones }}</h2></div>
+        <div class="metric-card"><h4>Active Drones</h4><h2>{{ ov.kpi.active_drones }}</h2><small>of {{ summary.total_drones }} in the fleet</small></div>
+        <div class="metric-card" style="{{ 'background:#991b1b;' if ov.kpi.crashes }}"><h4>Crashes to Date</h4><h2>{{ ov.kpi.crashes }}</h2><small>{{ ov.kpi.crashes_today }} today</small></div>
+        <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ ov.kpi.logs_today }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#991b1b;' if summary.critical }}"><h4>Critical Reports</h4><h2>{{ summary.critical }}</h2></div>
         <div class="metric-card"><h4>Pending</h4><h2>{{ summary.pending }}</h2></div>
         <div class="metric-card"><h4>Failed</h4><h2>{{ summary.failed }}</h2></div>
-        <div class="metric-card" style="background:#991b1b;"><h4>Critical</h4><h2>{{ summary.critical }}</h2></div>
     </div>
+
+    <form method="GET" class="filters" style="margin-top:6px;">
+        <input type="hidden" name="department_id" value="{{ department.id }}">
+        <div class="input-group">
+            <label>Drone (filters every number below)</label>
+            <select name="drone_id" onchange="this.form.submit()">
+                <option value="">All drones</option>
+                {% for d in dept_drones %}<option value="{{ d.id }}" {{ 'selected' if filters.drone_id == d.id }}>{{ d.msn }} · {{ d.model }}</option>{% endfor %}
+            </select>
+        </div>
+    </form>
+    {% set panel_id = 'dept' %}
+    {% include "_fleet_panel.html" %}
 
     {% set donut_data = anomaly_types %}
     {% set donut_title = 'Anomaly Types' %}

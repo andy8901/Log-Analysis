@@ -1,99 +1,250 @@
 {% extends "base.html" %}
 {% block title %}Admin Overview{% endblock %}
 {% block content %}
-<div class="card">
-    <h1 style="text-align:center;">Organization-Wide Overview</h1>
+{% set hero_title = "Organization-Wide Overview" %}
+{% set hero_sub = "Every flight log uploaded across the organisation: what was flown, what went wrong, and whose error it was. Filter by department, drone and period below; every number and chart follows the selection." %}
+{% set hero_chips = [totals.departments ~ " departments", totals.drones ~ " drones", totals.users ~ " users"] %}
+{% include "_hero.html" %}
 
-    <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:24px;font-size:0.85em;color:var(--text-muted);">
-        <span style="display:inline-flex;align-items:center;gap:6px;">
-            <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ 'var(--good)' if drive_sync.configured and drive_sync.exists else ('var(--warn)' if drive_sync.configured else 'var(--slate-300)') }};"></span>
-            {% if drive_sync.configured %}
-                Drive sync ({{ 'rclone' if drive_sync.mode == 'rclone' else 'folder' }}): {{ drive_sync.abs_path }}
-                {% if not drive_sync.exists %}
-                <strong style="color:var(--warn);">&mdash; {{ drive_sync.exists_label if drive_sync.mode == 'rclone' else 'folder does not exist yet' }}</strong>
-                {% endif %}
-            {% else %}
-                Drive sync: not configured
-            {% endif %}
-            <form method="POST" action="{{ url_for('admin.drive_sync_test') }}" style="display:inline;">
-                <button class="btn secondary" type="submit" style="padding:4px 12px;font-size:0.85em;">Test Sync</button>
-            </form>
-        </span>
-        {% if drive_sync.env_overridden %}
-        <span style="color:var(--warn);max-width:600px;text-align:center;">
-            Note: an existing environment variable had DRIVE_SYNC_ROOT set to
-            <code>{{ drive_sync.prior_env_value }}</code> &mdash; .env now takes priority and overrode it.
-            If this isn't the value you expect, check for a leftover PowerShell <code>$env:DRIVE_SYNC_ROOT</code>
-            or a persistent Windows System/User environment variable with that name and remove it.
-        </span>
+<style>
+    .ov-filter{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; background:var(--card-bg); border:1px solid var(--card-border); border-radius:var(--radius-md); padding:14px 16px; margin-bottom:16px; }
+    .ov-filter .input-group{ margin:0; min-width:200px; }
+    .ov-scope{ color:var(--text-muted); font-size:0.9em; margin:-4px 0 16px; }
+    .ov-two{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px; }
+    @media (max-width:1000px){ .ov-two{ grid-template-columns:1fr; } }
+    .ov-box{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:14px; padding:16px; min-width:0; }
+    .ov-box h3{ margin:0 0 10px; font-size:1em; }
+    .hl-item{ display:flex; gap:10px; padding:8px 0; border-top:1px solid var(--table-border); }
+    .hl-item:first-of-type{ border-top:0; }
+    .kpi6{ grid-template-columns:repeat(6, minmax(0, 1fr)); }
+    @media (max-width:1300px){ .kpi6{ grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+    @media (max-width:700px){ .kpi6{ grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+    .hl-dot{ width:10px; height:10px; border-radius:50%; margin-top:6px; flex:0 0 10px; background:var(--good); }
+    .hl-dot.CRITICAL{ background:var(--danger); } .hl-dot.WARNING{ background:var(--warn); } .hl-dot.crash{ background:var(--danger); box-shadow:0 0 0 3px rgba(220,38,38,0.25); }
+    .hl-meta{ color:var(--text-muted); font-size:0.82em; }
+    .v-human{ color:#e07a3f; font-weight:700; } .v-system{ color:#8b7cf6; font-weight:700; }
+    .drone-card{ display:grid; grid-template-columns:150px 1fr; gap:16px; align-items:center; }
+    .drone-card img{ width:150px; height:120px; object-fit:contain; background:#fff; border-radius:12px; padding:6px; }
+    .ov-tools{ display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; align-items:center; }
+    .ov-box canvas{ max-height:260px; }
+</style>
+
+<form method="GET" class="ov-filter" id="ovFilter">
+    <div class="input-group">
+        <label>Department</label>
+        <select name="department_id" id="fDept">
+            <option value="">All departments</option>
+            {% for d in departments %}<option value="{{ d.id }}" {{ 'selected' if filters.department_id == d.id }}>{{ d.name }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="input-group">
+        <label>Drone</label>
+        <select name="drone_id" id="fDrone">
+            <option value="">All drones</option>
+            {% for d in drones %}<option value="{{ d.id }}" data-dept="{{ d.department_id }}" {{ 'selected' if filters.drone_id == d.id }}>{{ d.msn }} · {{ d.model }} · {{ d.department.name }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="input-group">
+        <label>Period</label>
+        <select name="period" id="fPeriod">
+            {% for k, label in periods.items() %}<option value="{{ k }}" {{ 'selected' if filters.period == k }}>{{ label }}</option>{% endfor %}
+        </select>
+    </div>
+    <noscript><button class="btn" type="submit">Apply</button></noscript>
+    <a class="btn secondary" href="{{ url_for('admin.dashboard') }}">Reset</a>
+</form>
+<div class="ov-scope">
+    Showing <strong>{{ selected_drone.msn ~ ' (' ~ selected_drone.model ~ ')' if selected_drone else 'all drones' }}</strong>
+    in <strong>{{ (departments|selectattr('id', 'equalto', filters.department_id)|first).name if filters.department_id else 'all departments' }}</strong>,
+    <strong>{{ periods[filters.period]|lower }}</strong>.
+</div>
+
+<div class="summary-grid kpi6">
+    <div class="metric-card"><h4>Total Uploads</h4><h2>{{ ov.kpi.uploads }}</h2>
+        {% if trends.uploads is not none %}<span class="metric-trend {{ 'up' if trends.uploads >= 0 else 'down' }}">{{ '+' if trends.uploads >= 0 }}{{ trends.uploads }}% <small>vs last 7 days</small></span>{% endif %}</div>
+    <div class="metric-card"><h4>Flights Analyzed</h4><h2>{{ ov.kpi.flights }}</h2>
+        {% if trends.flights is not none %}<span class="metric-trend {{ 'up' if trends.flights >= 0 else 'down' }}">{{ '+' if trends.flights >= 0 }}{{ trends.flights }}% <small>vs last 7 days</small></span>{% endif %}</div>
+    <div class="metric-card"><h4>Active Drones</h4><h2>{{ ov.kpi.active_drones }}</h2><small>with at least one analysed flight</small></div>
+    <div class="metric-card" style="{{ 'background:#991b1b;' if ov.kpi.crashes }}"><h4>Crashes to Date</h4><h2>{{ ov.kpi.crashes }}</h2><small>{{ ov.kpi.crashes_today }} today</small></div>
+    <div class="metric-card"><h4>Users</h4><h2>{{ totals.users }}</h2></div>
+    <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ ov.kpi.logs_today }}</h2>{% if ov.kpi.pending %}<small>{{ ov.kpi.pending }} waiting in the queue</small>{% endif %}</div>
+</div>
+
+<div class="ov-two">
+    <div class="ov-box">
+        <h3>Highlights of today</h3>
+        {% set h = ov.highlights %}
+        {% if h.logs %}
+        <p style="margin:0 0 8px;">{{ h.logs }} log(s) analysed today from {{ h.drones }} drone(s) in {{ h.departments }} department(s){% if h.crashes %}, <strong style="color:var(--danger);">{{ h.crashes }} crash(es)</strong>{% endif %}{% if h.top_issue %}; most common issue: <strong>{{ h.top_issue|lower }}</strong>{% endif %}.</p>
+        {% for it in h['items'] %}
+        <div class="hl-item">
+            <span class="hl-dot {{ 'crash' if it.crash else it.status }}"></span>
+            <div>
+                <div><strong>{{ it.msn }}</strong> &middot; {{ it.headline }}</div>
+                <div class="hl-meta">{{ it.department }}{% if it.verdict %} &middot; suggested <span class="v-{{ it.verdict }}">{{ 'Human error' if it.verdict == 'human' else 'System error' }}</span>{% endif %} &middot; <a href="{{ url_for('dept.view_report', upload_id=it.upload_id) }}">Open report</a></div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p style="color:var(--text-muted);margin:0;">No logs analysed yet today{{ ' for this selection' if filters.drone_id or filters.department_id }}.</p>
         {% endif %}
     </div>
-
-    <div class="summary-grid">
-        <div class="metric-card">
-            <h4>Total Uploads</h4><h2>{{ totals.uploads }}</h2>
-            {% if trends.uploads is not none %}<span class="metric-trend {{ 'up' if trends.uploads >= 0 else 'down' }}">{{ '+' if trends.uploads >= 0 }}{{ trends.uploads }}% <small>vs last 7 days</small></span>{% endif %}
-        </div>
-        <div class="metric-card">
-            <h4>Flights Analyzed</h4><h2>{{ totals.logs_ytd }}</h2>
-            {% if trends.flights is not none %}<span class="metric-trend {{ 'up' if trends.flights >= 0 else 'down' }}">{{ '+' if trends.flights >= 0 }}{{ trends.flights }}% <small>vs last 7 days</small></span>{% endif %}
-        </div>
-        <div class="metric-card">
-            <h4>Active Drones</h4><h2>{{ totals.drones }}</h2>
-            {% if trends.drones is not none %}<span class="metric-trend {{ 'up' if trends.drones >= 0 else 'down' }}">{{ '+' if trends.drones >= 0 }}{{ trends.drones }}% <small>vs last 7 days</small></span>{% else %}<span class="metric-trend flat">No change</span>{% endif %}
-        </div>
-        <div class="metric-card"><h4>Departments</h4><h2>{{ totals.departments }}</h2><span class="metric-trend flat">No change</span></div>
-        <div class="metric-card"><h4>Users</h4><h2>{{ totals.users }}</h2></div>
-        <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ totals.logs_today }}</h2></div>
+    <div class="ov-box">
+        <h3>Logs analysed today, by department</h3>
+        <table>
+            <thead><tr><th>Department</th><th>Today</th><th>Flights</th><th>Crashes</th><th>Users</th></tr></thead>
+            <tbody>
+            {% for r in rows %}<tr><td>{{ r.department.name }}</td><td><strong>{{ r.today }}</strong></td><td>{{ r.flights }}</td><td>{{ r.crashes }}</td><td>{{ r.users }}</td></tr>
+            {% else %}<tr><td colspan="5" style="color:var(--text-muted);">No departments yet.</td></tr>{% endfor %}
+            </tbody>
+        </table>
     </div>
-
-    {% set donut_data = severity %}
-    {% set donut_title = 'Issue Severity' %}
-    {% include "_flight_summary.html" %}
-
-    <h2>By Department</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Department</th>
-                <th>Drones</th>
-                <th>Uploads</th>
-                <th>Completed</th>
-                <th>Failed</th>
-                <th>Critical</th>
-                <th>Warning</th>
-                <th>Today</th>
-                <th>YTD</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for row in rows %}
-            <tr>
-                <td>{{ row.department.name }}</td>
-                <td>{{ row.drones }}</td>
-                <td>{{ row.uploads }}</td>
-                <td>{{ row.completed }}</td>
-                <td>{{ row.failed }}</td>
-                <td>{{ row.critical }}</td>
-                <td>{{ row.warning }}</td>
-                <td>{{ row.logs_today }}</td>
-                <td>{{ row.logs_ytd }}</td>
-                <td>
-                    <a class="btn" href="{{ url_for('dept.dashboard', department_id=row.department.id) }}">View Dashboard</a>
-                    <a class="btn secondary" href="{{ url_for('dept.drone_list', department_id=row.department.id) }}">View Drones</a>
-                </td>
-            </tr>
-        {% else %}
-            <tr><td colspan="10" style="text-align:center;color:var(--text-muted);">No departments yet — create one.</td></tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
-    <p style="margin-top:20px;">
-        <a class="btn" href="{{ url_for('admin.all_drones') }}">All Drones</a>
-        <a class="btn" href="{{ url_for('admin.all_people') }}">All People</a>
-        <a class="btn secondary" href="{{ url_for('admin.export_raw_data') }}">Multilog Analysis (Export Raw Data, Excel)</a>
-    </p>
 </div>
+
+{% if selected_drone %}
+<div class="ov-box" style="margin-top:18px;">
+    <h3>Drone {{ selected_drone.msn }}</h3>
+    {% set photo = {'Tavas': 'drones/tavas.png', 'Nimble': 'drones/nimble.png'}.get(selected_drone.model, 'drones/generic.webp') %}
+    <div class="drone-card">
+        <img src="{{ url_for('static', filename=photo) }}" alt="{{ selected_drone.model }}">
+        <div>
+            <div><strong>{{ selected_drone.model }}</strong> &middot; {{ selected_drone.department.name }}</div>
+            <div class="hl-meta">{{ drone_stats.total_logs }} log(s), {{ drone_stats.total_flights }} analysed &middot; avg flight time {{ drone_stats.avg_flight_time_min or '—' }} min &middot; {{ drone_stats.critical_count }} critical, {{ drone_stats.warning_count }} warning</div>
+            <a class="btn secondary" style="margin-top:8px;" href="{{ url_for('dept.drone_detail', drone_id=selected_drone.id) }}">Open drone page</a>
+        </div>
+    </div>
+    <canvas id="droneTrend" height="90" style="margin-top:14px;"></canvas>
+</div>
+{% endif %}
+
+{% set panel_id = 'org' %}
+{% include "_fleet_panel.html" %}
+
+<div class="ov-two">
+    <div class="ov-box"><h3>Flights trend (last 14 days)</h3><canvas id="trendChart"></canvas></div>
+    <div class="ov-box"><h3>Department performance</h3><canvas id="deptChart"></canvas></div>
+</div>
+
+<div class="fp-section"><h2>By department</h2></div>
+<div style="overflow-x:auto;">
+<table>
+    <thead><tr><th>Department</th><th>Users</th><th>Drones</th><th>Uploads</th><th>Flights</th><th>Today</th><th>Crashes</th><th>Flights with issues</th><th>Pilot errors</th><th>System errors</th><th>Yet to decide</th><th>Failed</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+        <tr>
+            <td><strong>{{ r.department.name }}</strong></td><td>{{ r.users }}</td><td>{{ r.drones }}</td><td>{{ r.uploads }}</td><td>{{ r.flights }}</td>
+            <td>{{ r.today }}</td><td>{{ r.crashes }}</td><td>{{ r.issues }}</td><td>{{ r.pilot }}</td><td>{{ r.system }}</td><td>{{ r.undecided }}</td><td>{{ r.failed }}</td>
+            <td style="white-space:nowrap;">
+                <a class="btn" href="{{ url_for('admin.dashboard', department_id=r.department.id, period=filters.period) }}">Focus</a>
+                <a class="btn secondary" href="{{ url_for('dept.dashboard', department_id=r.department.id) }}">Dashboard</a>
+            </td>
+        </tr>
+    {% else %}
+        <tr><td colspan="13" style="text-align:center;color:var(--text-muted);">No departments yet — create one.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<div class="ov-two">
+    <div class="ov-box">
+        <h3>Drones by issues</h3>
+        {% if top_drones %}
+        <table>
+            <thead><tr><th>MSN</th><th>Model</th><th>Dept</th><th>Flights</th><th>Issues</th><th>Last flight</th><th></th></tr></thead>
+            <tbody>
+            {% for d in top_drones %}
+            <tr><td>{{ d.msn }}</td><td>{{ d.model }}</td><td>{{ d.department }}</td><td>{{ d.total_flights }}</td>
+                <td><span class="badge badge-{{ 'CRITICAL' if d.issues > 1 else ('WARNING' if d.issues else 'PASS') }}">{{ d.issues }}</span></td><td>{{ d.last_flight }}</td>
+                <td><a class="btn secondary" style="padding:5px 12px;font-size:0.85em;" href="{{ url_for('admin.dashboard', drone_id=d.drone_id, period=filters.period) }}">Select</a></td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p style="color:var(--text-muted);">No analysed flights yet.</p>{% endif %}
+    </div>
+    <div class="ov-box">
+        <h3>Recent anomalies</h3>
+        {% for a in anomalies %}
+        <div class="hl-item"><span class="hl-dot {{ a.severity }}"></span>
+            <div><div><strong>{{ a.msn }}</strong> &mdash; {{ a.message }}</div>
+            <div class="hl-meta">{% if a.department %}{{ a.department }} &middot; {% endif %}{{ a.date }} &middot; <a href="{{ url_for('dept.view_report', upload_id=a.upload_id) }}">View report</a></div></div></div>
+        {% else %}<p style="color:var(--text-muted);">No anomalies recorded &mdash; all clear.</p>{% endfor %}
+    </div>
+</div>
+
+<div class="ov-box" style="margin-top:18px;">
+    <h3>Take-off locations ({{ ov.takeoffs|length }} flights with GPS; red = crash)</h3>
+    <div id="takeoffMap" style="height:360px;border-radius:10px;"></div>
+</div>
+
+<div class="ov-tools">
+    <a class="btn" href="{{ url_for('admin.bulk_upload') }}">Upload a folder of logs</a>
+    <a class="btn secondary" href="{{ url_for('admin.export_raw_data') }}">Multilog Analysis (Excel)</a>
+    <a class="btn secondary" href="{{ url_for('admin.all_drones') }}">All drones</a>
+    <a class="btn secondary" href="{{ url_for('admin.all_people') }}">All people</a>
+    {% if needs_investigation %}
+    <form method="POST" action="{{ url_for('admin.reinvestigate') }}" style="display:inline;">
+        <button class="btn secondary" type="submit" title="Older logs without the current flight investigation">Run flight investigation on {{ needs_investigation }} older log(s)</button>
+    </form>
+    {% endif %}
+    {% if queue_size %}<span style="color:var(--text-muted);">{{ queue_size }} job(s) in the background queue</span>{% endif %}
+</div>
+
+<div style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:0.85em;color:var(--text-muted);flex-wrap:wrap;">
+    <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ 'var(--good)' if drive_sync.configured and drive_sync.exists else ('var(--warn)' if drive_sync.configured else 'var(--slate-300)') }};"></span>
+    {% if drive_sync.configured %}Drive sync ({{ 'rclone' if drive_sync.mode == 'rclone' else 'folder' }}): {{ drive_sync.abs_path }}{% if not drive_sync.exists %} <strong style="color:var(--warn);">&mdash; {{ drive_sync.exists_label if drive_sync.mode == 'rclone' else 'folder does not exist yet' }}</strong>{% endif %}{% else %}Drive sync: not configured{% endif %}
+    <form method="POST" action="{{ url_for('admin.drive_sync_test') }}" style="display:inline;"><button class="btn secondary" type="submit" style="padding:4px 12px;font-size:0.85em;">Test Sync</button></form>
+    {% if drive_sync.env_overridden %}<span style="color:var(--warn);">An environment variable had DRIVE_SYNC_ROOT=<code>{{ drive_sync.prior_env_value }}</code>; .env overrides it.</span>{% endif %}
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+    // filter: limit the drone list to the chosen department, and apply on change
+    const f = document.getElementById('ovFilter'), dept = document.getElementById('fDept'), drone = document.getElementById('fDrone');
+    function limit(){ [...drone.options].forEach(o => { if (!o.value) return; o.hidden = !!dept.value && o.dataset.dept !== dept.value; });
+        if (drone.selectedOptions[0] && drone.selectedOptions[0].hidden) drone.value = ''; }
+    limit();
+    dept.addEventListener('change', () => { limit(); f.submit(); });
+    drone.addEventListener('change', () => f.submit());
+    document.getElementById('fPeriod').addEventListener('change', () => f.submit());
+
+    if (typeof Chart !== 'undefined') {
+        const trend = {{ daily_trend|tojson }};
+        new Chart(document.getElementById('trendChart'), { type: 'line',
+            data: { labels: trend.map(d => d.date), datasets: [
+                { label: 'Flights', data: trend.map(d => d.total), borderColor: '#0ea5e9', backgroundColor: 'rgba(14,165,233,0.15)', fill: true, tension: 0.3 },
+                { label: 'With anomalies', data: trend.map(d => d.anomalies), borderColor: '#f59e0b', tension: 0.3 }] },
+            options: { scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } } });
+        const dc = {{ dept_chart|tojson }};
+        new Chart(document.getElementById('deptChart'), { type: 'bar',
+            data: { labels: dc.map(d => d.name), datasets: [
+                { label: 'Flights', data: dc.map(d => d.flights), backgroundColor: '#0ea5e9' },
+                { label: 'Flights with issues', data: dc.map(d => d.issues), backgroundColor: '#f59e0b' },
+                { label: 'Crashes', data: dc.map(d => d.crashes), backgroundColor: '#dc2626' }] },
+            options: { scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } } });
+        {% if drone_series %}
+        const ds = {{ drone_series|tojson }};
+        new Chart(document.getElementById('droneTrend'), { type: 'line',
+            data: { labels: ds.labels, datasets: [
+                { label: 'Flight time (min)', data: ds.flight_time, borderColor: '#0ea5e9', yAxisID: 'y', pointBackgroundColor: ds.crash.map(c => c ? '#dc2626' : '#0ea5e9'), pointRadius: ds.crash.map(c => c ? 6 : 3) },
+                { label: 'Range (m)', data: ds.range, borderColor: '#f59e0b', yAxisID: 'y1' },
+                { label: 'Min voltage (V)', data: ds.min_voltage, borderColor: '#8b7cf6', yAxisID: 'y2' }] },
+            options: { interaction: { mode: 'index', intersect: false }, scales: {
+                y: { position: 'left', title: { display: true, text: 'min' } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'm' } },
+                y2: { display: false } } } });
+        {% endif %}
+    }
+    if (typeof L !== 'undefined') {
+        const pts = {{ ov.takeoffs|tojson }}, el = document.getElementById('takeoffMap');
+        if (!pts.length) { el.innerHTML = '<p style="color:var(--text-muted);padding:20px;">No GPS take-off points for this selection.</p>'; return; }
+        const map = L.map(el); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+        const b = [];
+        pts.forEach(p => { b.push([p.lat, p.lon]); L.circleMarker([p.lat, p.lon], { radius: p.crash ? 8 : 5, color: p.crash ? '#dc2626' : '#0ea5e9', fillOpacity: 0.7 })
+            .bindPopup(`<b>${p.drone}</b><br>${p.department}<br><a href="/reports/${p.upload_id}">Open report</a>`).addTo(map); });
+        map.fitBounds(b, { padding: [30, 30], maxZoom: 16 });
+    }
+})();
+</script>
 {% endblock %}

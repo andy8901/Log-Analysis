@@ -11,22 +11,22 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
-from analyzer import process_log
 from incident_report import generate_incident_report
-from investigator import investigate
 from reports import generate_excel, generate_word_report
 
 from app import db
 from app.decorators import department_required
 from app.drive_sync import upload_to_drive
+from app.fleet import fleet_metrics, overview as fleet_overview
 from app.flight3d import build_track
+from app.processing import analyze_and_store, attach_investigation
 from app.models import AnalysisResult, AuditLog, CONCLUSION_CHOICES, Department, Drone, Upload
 from app.stats import (
-    anomaly_type_breakdown, daily_flight_trend, derive_result_metrics,
+    anomaly_type_breakdown, daily_flight_trend,
     drone_flight_series, flight_summary_aggregate, multilog_aggregate,
     period_window_counts, recent_anomalies, top_drones_from_uploads, trend_pct,
 )
-from app.storage import allowed_log_file, archive_upload, remove_with_retry
+from app.storage import allowed_log_file
 
 dept_bp = Blueprint("dept", __name__)
 
@@ -75,6 +75,7 @@ def dashboard():
     msn = request.args.get("msn", "").strip()
     model = request.args.get("model", "").strip()
     status = request.args.get("status", "").strip()
+    drone_id = request.args.get("drone_id", type=int)
 
     if msn:
         query = query.join(Drone, isouter=True).filter(
@@ -82,6 +83,8 @@ def dashboard():
         )
     if model:
         query = query.filter(Upload.drone_model == model)
+    if drone_id:
+        query = query.filter(Upload.drone_id == drone_id)
     if status:
         query = query.filter(Upload.status == status)
 
@@ -108,6 +111,18 @@ def dashboard():
     top_drones = top_drones_from_uploads(scoped_uploads, limit=5)
     ml_stats = multilog_aggregate(scoped_completed)
 
+    # the flight-performance / failsafe / issue panel follows the drone, MSN and model filters
+    def _keep(u):
+        if drone_id and u.drone_id != drone_id:
+            return False
+        if model and u.drone_model != model:
+            return False
+        if msn and msn.lower() not in ((u.drone.msn if u.drone else "") + " " + (u.msn_entered or "")).lower():
+            return False
+        return True
+    ov = fleet_overview([u for u in scoped_uploads if _keep(u)])
+    dept_drones = Drone.query.filter_by(department_id=department.id).order_by(Drone.msn).all()
+
     uploads_cur, uploads_prev = period_window_counts(scoped_uploads, days=7)
     flights_cur, flights_prev = period_window_counts(scoped_completed, days=7)
     trends = {
@@ -128,7 +143,8 @@ def dashboard():
         ml_stats=ml_stats,
         trends=trends,
         model_choices=DRONE_MODEL_CHOICES,
-        filters={"msn": msn, "model": model, "status": status},
+        filters={"msn": msn, "model": model, "status": status, "drone_id": drone_id},
+        ov=ov, dept_drones=dept_drones,
         own_only=own_only,
     )
 
@@ -197,52 +213,12 @@ def upload():
     db.session.flush()  # assign upload_row.id without committing yet
 
     try:
-        report = process_log(tmp_path, drone_model=drone_model or drone.model)
-        _attach_investigation(report, tmp_path, upload_row.id)
+        analyze_and_store(upload_row, tmp_path, department, drone, current_user, sync_reports=_sync_reports_to_drive)
     except Exception as exc:
-        current_app.logger.exception("Log processing failed for upload %s", upload_row.id)
-        upload_row.status = "failed"
-        upload_row.error_message = str(exc)
-        db.session.commit()
-        remove_with_retry(tmp_path)
         flash(f"Processing failed: {exc}", "error")
         return redirect(url_for("dept.dashboard"))
 
-    archived_path = archive_upload(tmp_path, filename, department.slug, drone.msn, upload_row.id)
-
-    upload_row.archived_path = archived_path
-    upload_row.status = "completed"
-    upload_row.analyzed_at = datetime.now(timezone.utc)
-
-    analysis = AnalysisResult(
-        upload_id=upload_row.id,
-        report_status=report.get("status"),
-        alert_count=len(report.get("alerts") or []),
-        top_alerts=json.dumps((report.get("alerts") or [])[:5]),
-        report_json=json.dumps(report),
-        multilog_json=_extract_multilog_json(archived_path, upload_row.id),
-        **derive_result_metrics(report),
-    )
-    db.session.add(analysis)
-    AuditLog.record(current_user, "upload_analyzed", f"upload={upload_row.id} drone={drone.msn}")
-    db.session.commit()
-
-    upload_to_drive(archived_path, department.name, drone.msn, os.path.basename(archived_path), kind="Raw Logs")
-    _sync_reports_to_drive(upload_row, report, department, drone)
-
     return redirect(url_for("dept.view_report", upload_id=upload_row.id))
-
-
-def _attach_investigation(report, log_path, upload_id):
-    """Best-effort: adds report["investigation"] -- the plain-language "what happened, and was it a human error or a
-    system error" analysis from investigator.py (.bin logs only). Never blocks or fails the upload."""
-    try:
-        inv = investigate(log_path)
-        if inv:
-            report["investigation"] = inv
-    except Exception:
-        current_app.logger.warning("flight investigation failed for upload %s", upload_id, exc_info=True)
-    return report
 
 
 def _ensure_investigation(upload_row, report):
@@ -251,36 +227,12 @@ def _ensure_investigation(upload_row, report):
         return report
     if not upload_row.archived_path.lower().endswith(".bin") or not os.path.exists(upload_row.archived_path):
         return report
-    _attach_investigation(report, upload_row.archived_path, upload_row.id)
+    attach_investigation(report, upload_row.archived_path, upload_row.id)
     if report.get("investigation"):
         upload_row.analysis.report_json = json.dumps(report)
+        upload_row.analysis.fleet_json = json.dumps(fleet_metrics(report, upload_row.analysis.get_multilog()))
         db.session.commit()
     return report
-
-
-def _extract_multilog_json(archived_path, upload_id):
-    """Best-effort: runs the same ~150-field extraction the admin Multilog
-    Analysis export uses (multilog_analyzer.analyze_single_log(), untouched
-    analysis logic) once at upload time, so the richer dashboard metrics
-    that live only in that field set (range from home, battery voltage at
-    a failsafe trigger, thrust/GPS issue counts) are available without
-    re-parsing the raw log later. Never blocks or fails the upload -- on
-    any error this just leaves multilog_json unset, same as Drive sync."""
-    from multilog_analyzer import analyze_single_log
-
-    try:
-        result = analyze_single_log(archived_path)
-        if "_error" in result:
-            current_app.logger.warning(
-                "multilog extraction skipped for upload %s: %s", upload_id, result["_error"]
-            )
-            return None
-        return json.dumps(result)
-    except Exception:
-        current_app.logger.warning(
-            "multilog extraction failed for upload %s", upload_id, exc_info=True
-        )
-        return None
 
 
 def _sync_reports_to_drive(upload_row, report, department, drone):

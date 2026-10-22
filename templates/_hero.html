@@ -1,0 +1,37 @@
+{# Front-page banner: title on the left, a collage of the fleet's drone photos on the right.
+   Expects hero_title, hero_sub (strings) and drone_photos (list of static paths, injected by app/__init__). #}
+<style>
+    .hero{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:18px; align-items:stretch;
+           background:linear-gradient(120deg, #0b2a3d 0%, #0f3b52 45%, #13506b 100%); border-radius:var(--radius-lg);
+           padding:22px 24px; margin-bottom:20px; color:#e6f6fb; overflow:hidden; position:relative; }
+    .hero h1{ margin:0 0 6px; font-size:1.7em; color:#ffffff; text-align:left; }
+    .hero p{ margin:0; color:#b8e3f0; max-width:52ch; }
+    .hero .hero-meta{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .hero .chip{ background:rgba(84,200,232,0.18); color:#d6f3fb; border:1px solid rgba(84,200,232,0.35); padding:4px 10px; border-radius:999px; font-size:0.8em; }
+    .hero-collage{ display:grid; grid-template-columns:1.35fr 1fr; grid-template-rows:1fr 1fr; gap:10px; min-height:190px; }
+    .hero-collage .tile{ background:#ffffff; border-radius:14px; display:flex; align-items:center; justify-content:center; padding:8px; position:relative; overflow:hidden; }
+    .hero-collage .tile img{ max-width:100%; max-height:100%; object-fit:contain; display:block; }
+    .hero-collage .tile.big{ grid-row:1 / span 2; }
+    .hero-collage .tile span{ position:absolute; left:8px; bottom:6px; font-size:0.7em; font-weight:700; letter-spacing:0.06em; color:#0f3b52; text-transform:uppercase; }
+    .hero-collage.n1{ grid-template-columns:1fr; grid-template-rows:1fr; }
+    @media (max-width:900px){ .hero{ grid-template-columns:1fr; } .hero-collage{ min-height:160px; } }
+</style>
+<div class="hero">
+    <div style="display:flex;flex-direction:column;justify-content:center;">
+        <h1>{{ hero_title }}</h1>
+        <p>{{ hero_sub }}</p>
+        <div class="hero-meta">
+            {% for chip in hero_chips or [] %}<span class="chip">{{ chip }}</span>{% endfor %}
+            <span class="chip">{{ app_version.label }}</span>
+        </div>
+    </div>
+    {% set photos = drone_photos[:3] %}
+    <div class="hero-collage {{ 'n1' if photos|length == 1 }}">
+        {% for p in photos %}
+        <div class="tile {{ 'big' if loop.first and photos|length > 1 }}">
+            <img src="{{ url_for('static', filename=p.path) }}" alt="{{ p.name }}">
+            <span>{{ p.name }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>

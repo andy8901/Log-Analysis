@@ -1,0 +1,84 @@
+{# Flight performance, failsafes, issues and conclusions for whatever set of uploads the page filtered to.
+   Expects `ov` from app.fleet.overview(); `panel_id` (unique string) when included more than once. #}
+{% set pid = panel_id or 'fp' %}
+<style>
+    .fp-section{ margin:22px 0 10px; display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+    .fp-section h2{ margin:0; font-size:1.15em; }
+    .fp-section span{ color:var(--text-muted); font-size:0.85em; }
+    .fp-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px; }
+    .fp-tile{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:var(--radius-md); padding:12px 14px; }
+    .fp-tile .lbl{ color:var(--text-muted); font-size:0.78em; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
+    .fp-tile .val{ font-size:1.45em; font-weight:700; color:var(--text-strong); margin-top:2px; font-variant-numeric:tabular-nums; }
+    .fp-tile .val small{ font-size:0.55em; color:var(--text-muted); font-weight:500; margin-left:3px; }
+    .fp-tile .sub{ color:var(--text-muted); font-size:0.75em; margin-top:2px; }
+    .fp-tile.bad{ border-left:4px solid var(--danger); } .fp-tile.warn{ border-left:4px solid var(--warn); }
+    .fp-tile.sys{ border-left:4px solid #8b7cf6; } .fp-tile.hum{ border-left:4px solid #e07a3f; } .fp-tile.und{ border-left:4px solid var(--slate-400); }
+    .fp-charts{ display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-top:16px; }
+    @media (max-width:1000px){ .fp-charts{ grid-template-columns:1fr; } }
+    .fp-box{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:14px; padding:16px; }
+    .fp-box h4{ margin:0 0 10px; color:var(--text-strong); font-size:0.95em; }
+</style>
+
+<div class="fp-section"><h2>Flight performance</h2><span>averages per flight over {{ ov.kpi.flights }} analysed flight(s)</span></div>
+<div class="fp-grid">
+    {% for key, a in ov.averages.items() %}
+    <div class="fp-tile">
+        <div class="lbl">{{ a[0] }}</div>
+        <div class="val">{{ a[2] if a[2] is not none else '—' }}<small>{{ a[1] }}</small></div>
+        <div class="sub">{{ a[3] }} flight(s) with data{% if key == 'cold_start_s' %} &middot; power-on to arming{% endif %}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="fp-section"><h2>Failsafes</h2><span>when and where failsafes triggered</span></div>
+<div class="fp-grid">
+    {% for key, a in ov.failsafe.items() %}
+    <div class="fp-tile {{ 'warn' if a[4] }}">
+        <div class="lbl">{{ a[0] }}</div>
+        <div class="val">{{ a[2] if a[2] is not none else '—' }}<small>{{ a[1] }}</small></div>
+        <div class="sub">{{ a[4] }} flight(s) with this failsafe{% if a[3] != a[4] %} &middot; {{ a[3] }} with timing/position{% endif %}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="fp-section"><h2>Issues and conclusions</h2><span>number of flights</span></div>
+<div class="fp-grid">
+    {% for key, label in ov.issue_labels.items() %}
+    <div class="fp-tile {{ 'bad' if key == 'crash' and ov.issues[key] else ('warn' if ov.issues[key] else '') }}">
+        <div class="lbl">{{ label }}</div><div class="val">{{ ov.issues[key] }}</div>
+    </div>
+    {% endfor %}
+    <div class="fp-tile sys"><div class="lbl">System errors</div><div class="val">{{ ov.conclusions['system_error'] }}</div><div class="sub">confirmed conclusion{% if ov.suggested.get('system') %} &middot; +{{ ov.suggested.get('system') }} suggested{% endif %}</div></div>
+    <div class="fp-tile hum"><div class="lbl">Pilot errors</div><div class="val">{{ ov.conclusions['pilot_error'] }}</div><div class="sub">confirmed conclusion{% if ov.suggested.get('human') %} &middot; +{{ ov.suggested.get('human') }} suggested{% endif %}</div></div>
+    <div class="fp-tile und"><div class="lbl">Yet to decide</div><div class="val">{{ ov.conclusions['undetermined'] }}</div><div class="sub">{{ ov.conclusions[None] }} not concluded yet</div></div>
+</div>
+
+<div class="fp-charts">
+    <div class="fp-box"><h4>Issues by type</h4><div style="position:relative;height:300px;"><canvas id="{{ pid }}Issues"></canvas></div></div>
+    <div class="fp-box"><h4>Conclusions</h4><div style="position:relative;height:300px;"><canvas id="{{ pid }}Concl"></canvas></div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+    if (typeof Chart === 'undefined') return;
+    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    Chart.defaults.color = theme === 'light' ? '#64748b' : '#8b96ab';
+    Chart.defaults.borderColor = theme === 'light' ? '#e2e8f0' : 'rgba(255,255,255,0.08)';
+    const labels = {{ ov.issue_labels.values()|list|tojson }}, counts = {{ ov.issues.values()|list|tojson }};
+    const keys = {{ ov.issue_labels.keys()|list|tojson }};
+    const col = k => k === 'crash' ? '#dc2626' : /_fs$/.test(k) ? '#d97706' : k === 'prearm_issue' ? '#64748b' : '#8b7cf6';
+    new Chart(document.getElementById('{{ pid }}Issues'), {
+        type: 'bar',
+        data: { labels, datasets: [{ data: counts, backgroundColor: keys.map(col), borderRadius: 4 }] },
+        options: { maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } }
+    });
+    const cl = {{ ov.conclusions.values()|list|tojson }};
+    new Chart(document.getElementById('{{ pid }}Concl'), {
+        type: 'doughnut',
+        data: { labels: ['System error', 'Pilot error', 'Yet to decide', 'Other', 'Not concluded'],
+                datasets: [{ data: cl, backgroundColor: ['#8b7cf6', '#e07a3f', '#94a3b8', '#0ea5e9', '#334155'], borderWidth: 0 }] },
+        options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, cutout: '62%' }
+    });
+})();
+</script>

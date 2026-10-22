@@ -103,17 +103,49 @@ records and never merged.
 
 ## Admin analytics
 
-- **Organization Overview** (`/admin/`) — org-wide totals with trend badges
-  (vs. the previous 7 days), a 14-day Flights Trend line chart, a
-  Department Performance comparison (flights vs. anomalies), an Issue
-  Severity breakdown, a Top Drones by Issues table, a Recent Anomalies
-  feed, a takeoff-location map, and the per-department breakdown table.
-  Also: average range from home (farthest GPS point reached), average
-  battery voltage at the moment a battery failsafe triggered, and counts of
-  flights with a potential thrust-loss event or a GPS issue (signal loss,
-  low satellite count, poor HDOP, a position glitch) — these four read the
-  richer Multilog-format field set (see Analysis above), so they only
-  reflect flights that have it captured.
+- **Organization Overview** (`/admin/`) — opens with a banner showing a
+  collage of the fleet's drone photos (Tavas first), then filters for
+  **department, drone and period** (all time / today / 7 / 30 days / this
+  year). Every number and chart below follows the selection:
+  - Front-page totals: total uploads, flights analysed, active drones,
+    crashes to date (and today), users, logs analysed today.
+  - "Highlights of today" and a logs-analysed-today table per department.
+  - When one drone is selected: its photo, stats and a per-flight trend
+    (flight time, range, minimum voltage; crashes in red).
+  - **Flight performance** averages per flight: flight time, distance
+    travelled, range from home, max altitude, max/min voltage, current,
+    cold-start time (power-on to arming).
+  - **Failsafes**: average flight time when a battery failsafe triggered,
+    battery voltage then, and distance from home when a GCS or RC failsafe
+    triggered.
+  - **Issues and conclusions**: number of flights with a crash, each
+    failsafe, potential thrust loss, motor issue, GPS issue, EKF issue,
+    pre-arm failure or high vibration (the "Issues by type" chart splits the
+    same way), plus confirmed system errors, pilot errors and logs yet to
+    decide (with how many the investigator suggests but nobody has
+    confirmed yet).
+  - Department table (users, drones, flights, today, crashes, pilot/system
+    errors, undecided), drones ranked by issues, recent anomalies and the
+    take-off map (red = crash).
+
+  Issue and failsafe counts come from the flight investigator's flags
+  (`investigator.py`, `flags` / `failsafe_events`) and are cached per flight
+  in `analysis_results.fleet_json`. Logs analysed before v2.1.0 fall back to
+  the Multilog fields; the overview shows a **Re-run investigation** button
+  that refreshes them in the background.
+- **Upload Folder (Multilog)** (`/admin/bulk-upload`, admin only) — pick a
+  whole folder (sub-folders included) or drop many files. Each log is sent
+  in its own request and analysed by a background worker exactly like a
+  normal upload (report, investigation, Multilog fields), so a folder of
+  hundreds of logs never hits an upload-size or timeout limit and the page
+  can be closed. The drone MSN comes from each file's folder name
+  (`MSN_101/` → `101`), from the filename (`MSN_064_log…`), or one fixed
+  MSN for all; unknown drones are created in the chosen department. Each
+  batch can be exported on its own as a Multilog Excel
+  (`/admin/export/raw-data.xlsx?batch=<id>`). Files still waiting when the
+  server stops are resumed on the next start. Folder uploads are owned by
+  the admin account, so they show on admin and department-wide views, not
+  on a department user's "own uploads" dashboard.
 - **Fleet & Drones** (`/admin/drones`) — every drone across every
   department, with aggregates: total logs/flights, avg flight time, avg
   battery sag % (voltage drop across a flight), avg distance flown (summed
@@ -125,8 +157,9 @@ records and never merged.
 - **Multilog Analysis** (`/admin/export/raw-data.xlsx`) — one Excel file,
   every completed upload across every department, one row each.
 
-A department's own dashboard (`/dashboard`) shows the same style of
-widgets scoped to that department — or to just one person's own uploads
+A department's own dashboard (`/dashboard`) has the same banner, a drone
+filter and the same flight-performance / failsafe / issues panel, plus the
+same style of widgets scoped to that department — or to just one person's own uploads
 when a non-admin is viewing, per the confidentiality rule above — with an
 Anomaly Types breakdown (GPS Loss / Motor / Battery / Sensor, categorized
 from the alerts `analyzer.py`/`rca.py` already produce) in place of the
@@ -437,13 +470,18 @@ A Render Blueprint (`render.yaml`) is also included if you'd rather use
 a PaaS despite the persistent-disk cost tradeoff noted above — it builds
 and runs the same `Dockerfile`.
 
-## Known limitation: synchronous processing
+## Versions
 
-Analysis still runs synchronously inside the upload request (as in the
-original app) rather than on a background queue — an upload's HTTP request
-doesn't return until `process_log()` finishes. This matches the original
-tool's behavior and keeps the diagnostic engine untouched, but for very
-large logs or many concurrent uploads, moving analysis to a background
-worker (e.g. Celery or RQ + Redis) would be the natural next step; the
-`Upload.status` field (`queued` / `processing` / `completed` / `failed`)
-is already in place to support that without a schema change.
+The app version lives in `app/version.py` (see `CHANGELOG.md`) and is shown
+in the sidebar, on the login page, in every incident report's footer and at
+`GET /version` (JSON: version, release date, git build, investigator
+version). Set `APP_BUILD` to override the build label when the deployment
+has no `.git` folder (e.g. Docker).
+
+## Processing
+
+A single upload is still analysed inside its request. Folder uploads and
+"re-run investigation" jobs go through the background worker in
+`app/bulk.py` (one thread per server process; each job claims its upload
+with an atomic `queued → processing` update, so several gunicorn workers
+never analyse the same file twice).
