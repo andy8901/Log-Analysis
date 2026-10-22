@@ -20,6 +20,11 @@ load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 
 class Config:
+    # Bumped by hand on each notable release; shown in the sidebar footer so
+    # a department reporting an issue (or an admin checking whether a
+    # server has been updated) can say which version they're on.
+    APP_VERSION = "1.4.0"
+
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-secret-key-change-me")
 
     SQLALCHEMY_DATABASE_URI = os.environ.get(

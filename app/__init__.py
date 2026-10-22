@@ -48,6 +48,10 @@ def create_app(config_object=Config):
     app.register_blueprint(dept_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
 
+    @app.context_processor
+    def inject_app_version():
+        return {"app_version": config_object.APP_VERSION}
+
     @app.route("/healthz")
     def healthz():
         # Unauthenticated on purpose -- a monitoring probe, auto-restart

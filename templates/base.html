@@ -152,6 +152,10 @@
         .sidenav-who .who-role{
             color:#8291ab; font-size:0.72em; text-transform:uppercase; letter-spacing:0.03em;
         }
+        .sidenav-version{
+            text-align:center; color:#5c6a85; font-size:0.72em; padding:4px 10px 12px;
+            letter-spacing:0.02em;
+        }
 
         /* ---- Main column ---- */
         .app-main{ flex:1; min-width:0; }
@@ -284,7 +288,7 @@
 
         @media (max-width:900px){
             .sidenav{ width:62px; flex-basis:62px; }
-            .sidenav .brand span.brand-text, .sidenav .brand .brand-sub, .sidenav a .nav-label, .sidenav-who .who-text{ display:none; }
+            .sidenav .brand span.brand-text, .sidenav .brand .brand-sub, .sidenav a .nav-label, .sidenav-who .who-text, .sidenav-version{ display:none; }
             .sidenav a{ justify-content:center; }
             .sidenav-who{ justify-content:center; }
             .wrap{ padding:0 14px; }
@@ -328,6 +332,7 @@
                 <a href="{{ url_for('admin.users') }}" class="{{ 'active' if request.endpoint == 'admin.users' }}">{{ icon('users') }}<span class="nav-label">Users</span></a>
                 <a href="{{ url_for('admin.export_raw_data') }}">{{ icon('export') }}<span class="nav-label">Multilog Analysis</span></a>
                 <a href="{{ url_for('admin.import_raw_data') }}" class="{{ 'active' if request.endpoint == 'admin.import_raw_data' }}">{{ icon('upload') }}<span class="nav-label">Import Historical Data</span></a>
+                <a href="{{ url_for('admin.batch_upload') }}" class="{{ 'active' if request.endpoint == 'admin.batch_upload' }}">{{ icon('upload') }}<span class="nav-label">Batch Upload (Folder)</span></a>
                 <a href="{{ url_for('admin.audit') }}" class="{{ 'active' if request.endpoint == 'admin.audit' }}">{{ icon('audit') }}<span class="nav-label">Audit Log</span></a>
             {% else %}
                 <a href="{{ url_for('dept.dashboard') }}" class="{{ 'active' if request.endpoint == 'dept.dashboard' }}">{{ icon('overview') }}<span class="nav-label">Dashboard</span></a>
@@ -345,6 +350,7 @@
             </span>
         </div>
         {% endif %}
+        <div class="sidenav-version">Neosky v{{ app_version }}</div>
     </nav>
 
     <div class="app-main">

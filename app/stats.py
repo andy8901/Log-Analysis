@@ -353,6 +353,199 @@ def _ml_text(value):
     return "" if text.lower() in ("none", "nan", "n/a", "null") else text
 
 
+def _investigation_texts(inv):
+    """All title/text strings from one upload's investigation (findings +
+    checks), lowercased and joined -- a cheap substring-matching surface for
+    bucketing an already-produced investigation by category, the same
+    'read the already-computed text, never re-derive it' pattern
+    _categorize_alert() uses for analyzer.py's own alerts."""
+    parts = []
+    for item in (inv.get("findings") or []) + (inv.get("checks") or []):
+        parts.append(str(item.get("title") or ""))
+        parts.append(str(item.get("text") or ""))
+    return " ".join(parts).lower()
+
+
+def investigation_aggregate(uploads):
+    """Org/department/person-wide rollup of investigator.py's per-flight
+    investigation data (report['investigation']) -- read-only, same
+    'summarize what's already computed' pattern as multilog_aggregate().
+    Only uploads that already carry investigation data contribute (computed
+    at upload time for a new .bin upload, or lazily backfilled on first view
+    -- see routes_dept._ensure_investigation()); this never runs
+    investigate() itself, so it stays cheap on a dashboard hit and simply
+    reflects whatever subset currently has the data, same "-- when
+    unavailable" pattern as the rest of this module.
+
+    Two items this dashboard would otherwise want -- a PreArm-issue count
+    and an average cold-start time -- have no source here: investigator.py
+    doesn't surface either (PreArm messages are filtered out of its
+    findings, and it computes no cold-start figure), and per this project's
+    standing rule investigator.py's own detection logic is never extended
+    to manufacture one."""
+    today = today_start()
+    scored = 0
+    airtimes_min, max_dists, max_alts = [], [], []
+    battery_fs_airtimes_min = []
+    gcs_fs_dists = []
+    rc_fs_dists = []
+    thrust_issue = gps_issue = ekf_issue = motor_issue = 0
+    human_error = system_error = 0
+    crashes = crashes_today = 0
+
+    for u in uploads:
+        if u.status != "completed" or not u.analysis:
+            continue
+        report = u.analysis.get_report()
+        inv = report.get("investigation") if report else None
+        if not inv:
+            continue
+        scored += 1
+
+        fig = inv.get("figures") or {}
+        airtime_s = fig.get("airtime")
+        airtime_min = airtime_s / 60.0 if airtime_s else None
+        if airtime_min is not None:
+            airtimes_min.append(airtime_min)
+        if fig.get("maxDist") is not None:
+            max_dists.append(fig["maxDist"])
+        if fig.get("maxAlt") is not None:
+            max_alts.append(fig["maxAlt"])
+
+        text = _investigation_texts(inv)
+        if "thrust" in text:
+            thrust_issue += 1
+        if "motor" in text:
+            motor_issue += 1
+        if "gps" in text:
+            gps_issue += 1
+        if "ekf" in text or "navigation" in text:
+            ekf_issue += 1
+        if "battery failsafe" in text and airtime_min is not None:
+            battery_fs_airtimes_min.append(airtime_min)
+        if "gcs" in text and "failsafe" in text and fig.get("maxDist") is not None:
+            gcs_fs_dists.append(fig["maxDist"])
+        if ("rc link lost" in text or "radio failsafe" in text) and fig.get("maxDist") is not None:
+            rc_fs_dists.append(fig["maxDist"])
+
+        primary = (inv.get("verdict") or {}).get("primary")
+        if primary == "human":
+            human_error += 1
+        elif primary == "system":
+            system_error += 1
+
+        if inv.get("kind") == "crash":
+            crashes += 1
+            if u.uploaded_at and u.uploaded_at >= today:
+                crashes_today += 1
+
+    return {
+        "scored_flights": scored,
+        "avg_airtime_min": _avg(airtimes_min),
+        "avg_max_distance_m": _avg(max_dists),
+        "avg_max_altitude_m": _avg(max_alts),
+        "avg_airtime_at_battery_fs_min": _avg(battery_fs_airtimes_min),
+        "avg_distance_at_gcs_fs_m": _avg(gcs_fs_dists),
+        "avg_distance_at_rc_fs_m": _avg(rc_fs_dists),
+        "thrust_issue_flights": thrust_issue,
+        "motor_issue_flights": motor_issue,
+        "gps_issue_flights": gps_issue,
+        "ekf_issue_flights": ekf_issue,
+        "human_error_flights": human_error,
+        "system_error_flights": system_error,
+        "crash_count": crashes,
+        "crashes_today": crashes_today,
+    }
+
+
+def investigation_category_breakdown(uploads):
+    """Counts completed flights by investigation issue category -- the
+    'Issue Breakdown' donut, built from the same investigator.py text as
+    investigation_aggregate() above. A flight can land in more than one
+    bucket (e.g. a GPS glitch that also tripped an EKF check), since each
+    bucket answers its own yes/no question about that flight rather than
+    assigning one exclusive category the way the severity donut does."""
+    counts = {
+        "Thrust Loss": 0, "Motor": 0, "GPS": 0, "EKF": 0,
+        "Battery Failsafe": 0, "GCS/RC Failsafe": 0, "Crash": 0,
+    }
+    for u in uploads:
+        if u.status != "completed" or not u.analysis:
+            continue
+        report = u.analysis.get_report()
+        inv = report.get("investigation") if report else None
+        if not inv:
+            continue
+        text = _investigation_texts(inv)
+        if "thrust" in text:
+            counts["Thrust Loss"] += 1
+        if "motor" in text:
+            counts["Motor"] += 1
+        if "gps" in text:
+            counts["GPS"] += 1
+        if "ekf" in text or "navigation" in text:
+            counts["EKF"] += 1
+        if "battery failsafe" in text:
+            counts["Battery Failsafe"] += 1
+        if "gcs" in text and "failsafe" in text or "rc link lost" in text or "radio failsafe" in text:
+            counts["GCS/RC Failsafe"] += 1
+        if inv.get("kind") == "crash":
+            counts["Crash"] += 1
+    return {k: v for k, v in counts.items() if v > 0} or counts
+
+
+def conclusion_breakdown(uploads):
+    """Counts of completed, analyzed flights by their closing conclusion
+    (see models.CONCLUSION_CHOICES) -- "yet to decide" is the undetermined
+    bucket; a flight with no conclusion at all yet (conclusion is None,
+    i.e. nobody has closed it out) is counted there too, since from a
+    dashboard's point of view an unconcluded flight is exactly as
+    undecided as one explicitly marked that way."""
+    counts = {"pilot_error": 0, "system_error": 0, "undetermined": 0, "other": 0}
+    for u in uploads:
+        if u.status != "completed" or not u.analysis:
+            continue
+        key = u.conclusion if u.conclusion in counts else "undetermined"
+        counts[key] += 1
+    return counts
+
+
+def todays_highlight(uploads):
+    """The single most attention-worthy thing that happened today, for a
+    one-line 'highlight of the day' callout -- a crash (investigator.py's
+    kind == 'crash') if there was one, else the most recent CRITICAL
+    flight, else None for both. Reads only already-computed report/
+    investigation data."""
+    today = today_start()
+    todays = [u for u in uploads if u.status == "completed" and u.analysis and u.uploaded_at and u.uploaded_at >= today]
+    todays.sort(key=lambda u: u.uploaded_at, reverse=True)
+
+    crash = None
+    critical = None
+    for u in todays:
+        report = u.analysis.get_report()
+        inv = (report or {}).get("investigation") or {}
+        msn = u.drone.msn if u.drone else u.msn_entered
+        department = u.department.name if u.department else None
+        if crash is None and inv.get("kind") == "crash":
+            crash = {"msn": msn, "department": department}
+        if critical is None and u.analysis.report_status == "CRITICAL":
+            alerts = u.analysis.get_top_alerts()
+            critical = {"msn": msn, "department": department, "message": alerts[0] if alerts else "Critical flight"}
+    return {"crash": crash, "critical": critical}
+
+
+def uploads_for_drone(uploads, drone_id):
+    """Scopes an already-fetched upload list to one drone -- the filter
+    behind the org overview's drone selector (item #3): every existing
+    aggregate function here already just takes a list of uploads, so
+    scoping to one drone is a filter at the call site, not a new code path
+    through each of them."""
+    if not drone_id:
+        return uploads
+    return [u for u in uploads if u.drone_id == drone_id]
+
+
 def multilog_aggregate(uploads):
     """Metrics that live only in the richer multilog_analyzer.py field set
     (see AnalysisResult.multilog_json) -- captured once at upload time for

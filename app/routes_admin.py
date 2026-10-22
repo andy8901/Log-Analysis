@@ -13,11 +13,13 @@ from app.decorators import admin_required
 from app.drive_sync import diagnostics as drive_sync_diagnostics
 from app.drive_sync import test_write as drive_sync_test_write
 from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
+from app.routes_dept import DRONE_MODEL_CHOICES, process_and_save_log
 from app.stats import (
-    active_drone_trend, drone_aggregate, flight_summary_aggregate,
-    daily_flight_trend, issue_severity_breakdown, multilog_aggregate,
-    person_aggregate, recent_anomalies, today_start, top_drones_from_uploads,
-    trend_pct, period_window_counts, ytd_start,
+    active_drone_trend, conclusion_breakdown, drone_aggregate, flight_summary_aggregate,
+    daily_flight_trend, investigation_aggregate, investigation_category_breakdown,
+    issue_severity_breakdown, multilog_aggregate, person_aggregate,
+    recent_anomalies, today_start, todays_highlight, top_drones_from_uploads, trend_pct,
+    period_window_counts, uploads_for_drone, ytd_start,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -40,8 +42,18 @@ def dashboard():
     ytd = ytd_start()
 
     all_uploads = Upload.query.all()
-    all_drones_list = Drone.query.all()
+    all_drones_list = Drone.query.order_by(Drone.msn).all()
     all_completed_uploads = [u for u in all_uploads if u.status == "completed" and u.analysis]
+
+    selected_drone_id = request.args.get("drone_id", type=int)
+    selected_drone = next((d for d in all_drones_list if d.id == selected_drone_id), None) if selected_drone_id else None
+    # Everything below the top totals row (the "interactive analytics"
+    # panel: trend charts, donuts, top drones, anomalies, averages) is
+    # computed from this scoped list -- the org-wide totals row above it
+    # intentionally stays unscoped, since "how many drones/departments
+    # exist" shouldn't change just because one drone is selected.
+    scoped_completed_uploads = uploads_for_drone(all_completed_uploads, selected_drone_id)
+    scoped_uploads = uploads_for_drone(all_uploads, selected_drone_id)
 
     uploads_by_dept = {}
     drones_by_dept = {}
@@ -68,6 +80,7 @@ def dashboard():
             "logs_ytd": len([u for u in completed if u.uploaded_at and u.uploaded_at >= ytd]),
         })
 
+    org_investigation = investigation_aggregate(all_completed_uploads)
     totals = {
         "departments": len(departments),
         "users": User.query.count(),
@@ -75,6 +88,8 @@ def dashboard():
         "uploads": len(all_uploads),
         "logs_today": len([u for u in all_completed_uploads if u.uploaded_at and u.uploaded_at >= today]),
         "logs_ytd": len([u for u in all_completed_uploads if u.uploaded_at and u.uploaded_at >= ytd]),
+        "crashes_total": org_investigation["crash_count"],
+        "crashes_today": org_investigation["crashes_today"],
     }
 
     uploads_cur, uploads_prev = period_window_counts(all_uploads, days=7)
@@ -86,23 +101,30 @@ def dashboard():
         "drones": trend_pct(drones_cur, drones_prev),
     }
 
-    flight_summary = flight_summary_aggregate(all_completed_uploads)
-    daily_trend = daily_flight_trend(all_completed_uploads, days=14)
-    severity = issue_severity_breakdown(all_completed_uploads)
-    anomalies = recent_anomalies(all_completed_uploads, limit=6)
-    top_drones = top_drones_from_uploads(all_uploads, limit=5, include_department=True)
-    ml_stats = multilog_aggregate(all_completed_uploads)
+    flight_summary = flight_summary_aggregate(scoped_completed_uploads)
+    daily_trend = daily_flight_trend(scoped_completed_uploads, days=14)
+    severity = issue_severity_breakdown(scoped_completed_uploads)
+    anomalies = recent_anomalies(scoped_completed_uploads, limit=6)
+    top_drones = top_drones_from_uploads(scoped_uploads, limit=5, include_department=True)
+    ml_stats = multilog_aggregate(scoped_completed_uploads)
+    inv_stats = investigation_aggregate(scoped_completed_uploads)
+    issue_breakdown = investigation_category_breakdown(scoped_completed_uploads)
+    conclusion_counts = conclusion_breakdown(scoped_completed_uploads)
+    today_highlight = todays_highlight(all_completed_uploads)
 
     dept_chart = [
         {"name": row["department"].name, "flights": row["completed"], "anomalies": row["critical"] + row["warning"]}
         for row in rows
-    ]
+    ] if not selected_drone_id else None
 
     return render_template(
         "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
         flight_summary=flight_summary, daily_trend=daily_trend,
         severity=severity, anomalies=anomalies, top_drones=top_drones,
-        ml_stats=ml_stats, dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
+        ml_stats=ml_stats, inv_stats=inv_stats, issue_breakdown=issue_breakdown,
+        conclusion_counts=conclusion_counts, today_highlight=today_highlight,
+        dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
+        all_drones=all_drones_list, selected_drone=selected_drone,
     )
 
 
@@ -536,6 +558,76 @@ def import_raw_data():
         flash("The file had no rows to import.", "error")
 
     return redirect(url_for("admin.import_raw_data"))
+
+
+@admin_bp.route("/batch-upload", methods=["GET", "POST"])
+def batch_upload():
+    """Lets an admin run a whole folder of raw logs for one drone through
+    the same processing pipeline a department's own Upload Log page uses
+    (process_and_save_log() in routes_dept.py -- analyzer.py,
+    investigator.py and multilog_analyzer.py, all untouched) in one go,
+    instead of one-at-a-time per department. Each file becomes its own
+    Upload + AnalysisResult, exactly like a real department upload, so it
+    shows up in every dashboard aggregate the same way; this just saves the
+    admin from repeating the single-file form once per log in the folder.
+
+    The browser's folder picker (webkitdirectory) still submits every file
+    inside as a flat multi-file list, which is all this needs -- the whole
+    batch is treated as logs for one department + one drone, since that's
+    how a folder of raw logs off an aircraft's SD card is normally
+    organized."""
+    departments = Department.query.order_by(Department.name).all()
+
+    if request.method == "GET":
+        return render_template(
+            "admin/batch_upload.html", departments=departments, model_choices=DRONE_MODEL_CHOICES,
+        )
+
+    department_id = request.form.get("department_id", type=int)
+    department = next((d for d in departments if d.id == department_id), None)
+    drone_model = request.form.get("drone", "").strip()
+    msn = request.form.get("msn", "").strip()
+    flight_date = request.form.get("date", "").strip()
+    reported_by = request.form.get("reported_by", "").strip() or current_user.full_name
+
+    if department is None:
+        flash("Select a department", "error")
+        return redirect(url_for("admin.batch_upload"))
+    if not msn:
+        flash("MSN is required so these logs can be attached to a drone record", "error")
+        return redirect(url_for("admin.batch_upload"))
+
+    files = [f for f in request.files.getlist("log_files") if f and f.filename]
+    if not files:
+        flash("No files selected -- pick a folder of .bin/.log/.tlog files", "error")
+        return redirect(url_for("admin.batch_upload"))
+
+    completed = 0
+    failed = []
+    for f in files:
+        try:
+            upload_row = process_and_save_log(f, department, drone_model, msn, flight_date, reported_by, current_user)
+        except ValueError as exc:
+            failed.append(f"{f.filename}: {exc}")
+            continue
+        if upload_row.status == "failed":
+            failed.append(f"{f.filename}: {upload_row.error_message}")
+        else:
+            completed += 1
+
+    AuditLog.record(
+        current_user, "batch_upload",
+        f"department={department.name} msn={msn} {completed} completed, {len(failed)} failed",
+    )
+    db.session.commit()
+
+    if completed:
+        flash(f"Processed {completed} log(s) for {msn}.", "success")
+    if failed:
+        preview = "; ".join(failed[:10]) + (f" (+{len(failed) - 10} more)" if len(failed) > 10 else "")
+        flash(f"{len(failed)} file(s) failed: {preview}", "error")
+
+    return redirect(url_for("admin.batch_upload"))
 
 
 # ---- Departments -----------------------------------------------------
