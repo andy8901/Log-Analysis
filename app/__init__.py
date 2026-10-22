@@ -66,6 +66,27 @@ def create_app(config_object=Config):
         _migrate_add_missing_columns(app)
         _bootstrap_admin(app)
 
+    from app.version import version_info
+    _ver = version_info()
+
+    # Drone photos for the dashboard collage: every image in static/drones, Tavas first, the generic
+    # placeholder last. Add a photo there and it appears automatically.
+    _drone_dir = os.path.join(PROJECT_ROOT, "static", "drones")
+    _photos = sorted((f for f in os.listdir(_drone_dir) if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))),
+                     key=lambda f: (0 if f.lower().startswith("tavas") else 2 if f.lower().startswith("generic") else 1, f.lower())) if os.path.isdir(_drone_dir) else []
+    _drone_photos = [{"path": f"drones/{f}", "name": os.path.splitext(f)[0].replace("_", " ").replace("-", " ").title().replace("Generic", "Neosky fleet")} for f in _photos]
+
+    @app.context_processor
+    def inject_version():
+        return {"app_version": _ver, "drone_photos": _drone_photos}
+
+    @app.route("/version")
+    def version():
+        return jsonify(_ver)
+
+    from app.bulk import init_worker
+    init_worker(app)
+
     return app
 
 

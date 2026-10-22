@@ -5,7 +5,10 @@ import tempfile
 from datetime import datetime, timezone
 
 import pandas as pd
-from flask import Blueprint, current_app, flash, redirect, render_template, request, send_file, url_for
+from uuid import uuid4
+
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
+from werkzeug.utils import secure_filename
 from flask_login import current_user, login_required
 
 from app import db
@@ -13,12 +16,14 @@ from app.decorators import admin_required
 from app.drive_sync import diagnostics as drive_sync_diagnostics
 from app.drive_sync import test_write as drive_sync_test_write
 from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
+from app.bulk import enqueue as bulk_enqueue, queue_size as bulk_queue_size, resume_pending as bulk_resume_pending
+from app.fleet import PERIODS, department_rows, drone_series, overview as fleet_overview, period_start
 from app.stats import (
-    active_drone_trend, drone_aggregate, flight_summary_aggregate,
-    daily_flight_trend, issue_severity_breakdown, multilog_aggregate,
-    person_aggregate, recent_anomalies, today_start, top_drones_from_uploads,
-    trend_pct, period_window_counts, ytd_start,
+    active_drone_trend, drone_aggregate, daily_flight_trend,
+    person_aggregate, recent_anomalies, top_drones_from_uploads,
+    trend_pct, period_window_counts,
 )
+from app.storage import allowed_log_file
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -35,75 +40,192 @@ def _guard():
 
 @admin_bp.route("/")
 def dashboard():
+    """Organization-wide overview. Every number and chart follows the department / drone / period filter."""
     departments = Department.query.order_by(Department.name).all()
-    today = today_start()
-    ytd = ytd_start()
+    all_drones = Drone.query.order_by(Drone.msn).all()
+    all_users = User.query.all()
 
-    all_uploads = Upload.query.all()
-    all_drones_list = Drone.query.all()
-    all_completed_uploads = [u for u in all_uploads if u.status == "completed" and u.analysis]
+    dept_id = request.args.get("department_id", type=int)
+    drone_id = request.args.get("drone_id", type=int)
+    period = request.args.get("period", "all")
+    if period not in PERIODS:
+        period = "all"
+    selected_drone = Drone.query.get(drone_id) if drone_id else None
+    if selected_drone and dept_id and selected_drone.department_id != dept_id:
+        selected_drone, drone_id = None, None
 
-    uploads_by_dept = {}
-    drones_by_dept = {}
-    for u in all_uploads:
-        uploads_by_dept.setdefault(u.department_id, []).append(u)
-    for d in all_drones_list:
-        drones_by_dept.setdefault(d.department_id, []).append(d)
+    q = Upload.query
+    start = period_start(period)
+    if start is not None:
+        q = q.filter(Upload.uploaded_at >= start)
+    if dept_id:
+        q = q.filter(Upload.department_id == dept_id)
+    dept_uploads = q.all()                       # department table: period + department filter
+    uploads = [u for u in dept_uploads if not drone_id or u.drone_id == drone_id]
 
-    rows = []
-    for dept in departments:
-        dept_uploads = uploads_by_dept.get(dept.id, [])
-        completed = [u for u in dept_uploads if u.status == "completed"]
-        critical = [u for u in completed if u.analysis and u.analysis.report_status == "CRITICAL"]
-        warning = [u for u in completed if u.analysis and u.analysis.report_status == "WARNING"]
-        rows.append({
-            "department": dept,
-            "drones": len(drones_by_dept.get(dept.id, [])),
-            "uploads": len(dept_uploads),
-            "completed": len(completed),
-            "failed": len([u for u in dept_uploads if u.status == "failed"]),
-            "critical": len(critical),
-            "warning": len(warning),
-            "logs_today": len([u for u in completed if u.uploaded_at and u.uploaded_at >= today]),
-            "logs_ytd": len([u for u in completed if u.uploaded_at and u.uploaded_at >= ytd]),
-        })
+    ov = fleet_overview(uploads)
+    completed = [u for u, _ in ov["records"]]
+    rows = department_rows([d for d in departments if not dept_id or d.id == dept_id], dept_uploads, all_users, all_drones)
 
     totals = {
         "departments": len(departments),
-        "users": User.query.count(),
-        "drones": len(all_drones_list),
-        "uploads": len(all_uploads),
-        "logs_today": len([u for u in all_completed_uploads if u.uploaded_at and u.uploaded_at >= today]),
-        "logs_ytd": len([u for u in all_completed_uploads if u.uploaded_at and u.uploaded_at >= ytd]),
+        "users": len(all_users) if not dept_id else sum(1 for x in all_users if x.department_id == dept_id),
+        "drones": len(all_drones) if not dept_id else sum(1 for d in all_drones if d.department_id == dept_id),
     }
-
-    uploads_cur, uploads_prev = period_window_counts(all_uploads, days=7)
-    flights_cur, flights_prev = period_window_counts(all_completed_uploads, days=7)
-    drones_cur, drones_prev = active_drone_trend(all_uploads, days=7)
-    trends = {
-        "uploads": trend_pct(uploads_cur, uploads_prev),
-        "flights": trend_pct(flights_cur, flights_prev),
-        "drones": trend_pct(drones_cur, drones_prev),
-    }
-
-    flight_summary = flight_summary_aggregate(all_completed_uploads)
-    daily_trend = daily_flight_trend(all_completed_uploads, days=14)
-    severity = issue_severity_breakdown(all_completed_uploads)
-    anomalies = recent_anomalies(all_completed_uploads, limit=6)
-    top_drones = top_drones_from_uploads(all_uploads, limit=5, include_department=True)
-    ml_stats = multilog_aggregate(all_completed_uploads)
-
-    dept_chart = [
-        {"name": row["department"].name, "flights": row["completed"], "anomalies": row["critical"] + row["warning"]}
-        for row in rows
-    ]
+    uploads_cur, uploads_prev = period_window_counts(uploads, days=7)
+    flights_cur, flights_prev = period_window_counts(completed, days=7)
+    drones_cur, drones_prev = active_drone_trend(uploads, days=7)
+    trends = {"uploads": trend_pct(uploads_cur, uploads_prev), "flights": trend_pct(flights_cur, flights_prev),
+              "drones": trend_pct(drones_cur, drones_prev)}
 
     return render_template(
-        "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
-        flight_summary=flight_summary, daily_trend=daily_trend,
-        severity=severity, anomalies=anomalies, top_drones=top_drones,
-        ml_stats=ml_stats, dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
+        "admin/dashboard.html", ov=ov, rows=rows, totals=totals, trends=trends,
+        departments=departments, drones=all_drones, periods=PERIODS,
+        filters={"department_id": dept_id, "drone_id": drone_id, "period": period},
+        selected_drone=selected_drone,
+        drone_series=drone_series(ov["records"]) if selected_drone else None,
+        drone_stats=drone_aggregate(selected_drone) if selected_drone else None,
+        daily_trend=daily_flight_trend(completed, days=14),
+        top_drones=top_drones_from_uploads(uploads, limit=8, include_department=True),
+        anomalies=recent_anomalies(completed, limit=6),
+        dept_chart=[{"name": r["department"].name, "flights": r["flights"], "crashes": r["crashes"], "issues": r["issues"]} for r in rows],
+        drive_sync=drive_sync_diagnostics(), queue_size=bulk_queue_size(),
+        needs_investigation=_needs_investigation_count(),
     )
+
+
+def _stale_investigations():
+    """Completed .bin uploads whose flight investigation is missing or from an older investigator version."""
+    import investigator
+    from app.fleet import get_fleet
+    out, pending = [], []
+    for u in Upload.query.filter(Upload.status == "completed", Upload.source == "upload").all():
+        if not (u.archived_path or "").lower().endswith(".bin") or not u.analysis:
+            continue
+        m = get_fleet(u, pending) or {}
+        if m.get("inv_version") != investigator.VERSION:
+            out.append(u)
+    if pending:
+        db.session.commit()
+    return out
+
+
+def _needs_investigation_count():
+    return len(_stale_investigations())
+
+
+@admin_bp.route("/reinvestigate", methods=["POST"])
+def reinvestigate():
+    """Queue the flight investigation for every .bin log that doesn't have the current version yet."""
+    count = 0
+    for u in _stale_investigations():
+        if os.path.exists(u.archived_path):
+            bulk_enqueue("reinvestigate", u.id)
+            count += 1
+    AuditLog.record(current_user, "reinvestigate", f"{count} uploads queued")
+    db.session.commit()
+    flash(f"Queued {count} log(s) for the flight investigation. They're processed in the background; refresh the overview in a few minutes.", "success")
+    return redirect(url_for("admin.dashboard"))
+
+
+# --------------------------------------------------------------------------------------------- folder (bulk) upload
+MSN_MODES = (("folder", "From each file's folder name"), ("filename", "From each file name (e.g. MSN_064_...)"), ("fixed", "Same MSN for every file"))
+
+
+def _batches(limit=15):
+    rows = (db.session.query(Upload.batch_id, db.func.count(Upload.id), db.func.min(Upload.uploaded_at))
+            .filter(Upload.batch_id.isnot(None)).group_by(Upload.batch_id)
+            .order_by(db.func.min(Upload.uploaded_at).desc()).limit(limit).all())
+    out = []
+    for bid, n, started in rows:
+        ups = Upload.query.filter_by(batch_id=bid).all()
+        out.append({"id": bid, "files": n, "started": started,
+                    "done": sum(1 for u in ups if u.status == "completed"), "failed": sum(1 for u in ups if u.status == "failed"),
+                    "waiting": sum(1 for u in ups if u.status in ("queued", "processing")),
+                    "department": ups[0].department.name if ups else ""})
+    return out
+
+
+@admin_bp.route("/bulk-upload")
+def bulk_upload():
+    from app.routes_dept import DRONE_MODEL_CHOICES
+    return render_template("admin/bulk_upload.html", departments=Department.query.order_by(Department.name).all(),
+                           model_choices=DRONE_MODEL_CHOICES, msn_modes=MSN_MODES, batches=_batches(),
+                           batch_id=request.args.get("batch"), queue_size=bulk_queue_size())
+
+
+@admin_bp.route("/bulk-upload/new", methods=["POST"])
+def bulk_upload_new():
+    dept = Department.query.get(request.form.get("department_id", type=int) or 0)
+    if not dept:
+        return jsonify(error="Choose a department."), 400
+    batch_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + uuid4().hex[:6]
+    AuditLog.record(current_user, "bulk_upload_started", f"batch={batch_id} department={dept.name} files={request.form.get('count', '?')}")
+    db.session.commit()
+    return jsonify(batch_id=batch_id)
+
+
+@admin_bp.route("/bulk-upload/<batch_id>/file", methods=["POST"])
+def bulk_upload_file(batch_id):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{6}", batch_id):
+        return jsonify(error="bad batch"), 400
+    dept = Department.query.get(request.form.get("department_id", type=int) or 0)
+    f = request.files.get("log_file")
+    if not dept or not f or not f.filename:
+        return jsonify(error="Missing department or file."), 400
+    rel = (request.form.get("rel_path") or f.filename).replace("\\", "/")
+    name = secure_filename(os.path.basename(rel))
+    if not allowed_log_file(name):
+        return jsonify(error="Not a .bin/.log/.tlog file", skipped=True), 400
+    mode = request.form.get("msn_mode", "folder")
+    model = request.form.get("drone_model", "").strip()
+    msn = None
+    if mode == "fixed":
+        msn = request.form.get("msn", "").strip()
+    elif mode == "filename":
+        msn = _extract_msn_from_filename(name)
+    else:
+        parts = [p for p in rel.split("/") if p]
+        msn = parts[-2].strip() if len(parts) >= 2 else None
+        if msn:
+            msn = _extract_msn_from_filename(msn) or msn  # "MSN_101" -> "101"; other folder names kept as-is
+    msn = msn or "UNASSIGNED"
+
+    drone = Drone.query.filter_by(msn=msn, department_id=dept.id).first()
+    if drone is None:
+        drone = Drone(msn=msn, model=model or "UNKNOWN", department_id=dept.id)
+        db.session.add(drone)
+        db.session.flush()
+    os.makedirs(os.path.join(current_app.config["UPLOAD_TMP"], "bulk", batch_id), exist_ok=True)
+    tmp_path = os.path.join(current_app.config["UPLOAD_TMP"], "bulk", batch_id, f"{uuid4().hex}_{name}")
+    f.save(tmp_path)
+    u = Upload(department_id=dept.id, user_id=current_user.id, drone_id=drone.id, original_filename=name,
+               drone_model=model or drone.model, msn_entered=msn, flight_date=request.form.get("flight_date", "").strip() or None,
+               reported_by=request.form.get("reported_by", "").strip() or current_user.full_name,
+               status="queued", batch_id=batch_id, pending_path=tmp_path)
+    db.session.add(u)
+    db.session.commit()
+    bulk_enqueue("analyze", u.id)
+    return jsonify(upload_id=u.id, msn=msn, status="queued")
+
+
+@admin_bp.route("/bulk-upload/<batch_id>/status")
+def bulk_upload_status(batch_id):
+    out = []
+    for u in Upload.query.filter_by(batch_id=batch_id).order_by(Upload.id).all():
+        fl = json.loads(u.analysis.fleet_json) if u.analysis and u.analysis.fleet_json else {}
+        out.append({"id": u.id, "file": u.original_filename, "msn": u.msn_entered, "status": u.status,
+                    "error": u.error_message, "report_status": u.analysis.report_status if u.analysis else None,
+                    "headline": fl.get("headline"), "crash": fl.get("crash"), "verdict": fl.get("verdict"),
+                    "url": url_for("dept.view_report", upload_id=u.id) if u.status == "completed" else None})
+    return jsonify(files=out, queue=bulk_queue_size())
+
+
+@admin_bp.route("/bulk-upload/resume", methods=["POST"])
+def bulk_upload_resume():
+    n = bulk_resume_pending()
+    flash(f"Re-queued {n} waiting file(s).", "success")
+    return redirect(url_for("admin.bulk_upload"))
 
 
 @admin_bp.route("/drive-sync-test", methods=["POST"])
@@ -170,11 +292,11 @@ def export_raw_data():
     rows = []
     skipped = []
 
-    uploads = (
-        Upload.query.filter_by(status="completed")
-        .order_by(Upload.uploaded_at.desc())
-        .all()
-    )
+    batch = request.args.get("batch")
+    uq = Upload.query.filter_by(status="completed")
+    if batch:
+        uq = uq.filter_by(batch_id=batch)
+    uploads = uq.order_by(Upload.uploaded_at.desc()).all()
     for u in uploads:
         if not u.analysis:
             skipped.append(f"upload {u.id}: no analysis")
@@ -204,7 +326,7 @@ def export_raw_data():
         db.session.commit()
         if skipped:
             current_app.logger.warning("export_raw_data skipped %d entries: %s", len(skipped), skipped)
-        return send_file(tmp_path, as_attachment=True, download_name="all_departments_raw_data.xlsx")
+        return send_file(tmp_path, as_attachment=True, download_name=f"multilog_batch_{batch}.xlsx" if batch else "all_departments_raw_data.xlsx")
     finally:
         try:
             os.remove(tmp_path)

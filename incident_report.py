@@ -253,6 +253,15 @@ def _chart(png, t, series, ylabel, inv, floor=None):
 
 
 # --------------------------------------------------------------------------------------------- main
+def _app_version():
+    try:
+        from app.version import version_info
+        v = version_info()
+        return v["label"] + (f", flight investigator v{v['investigator']}" if v.get("investigator") else "")
+    except Exception:
+        return ""
+
+
 def generate_incident_report(report, mission, output_path, template_path=LETTERHEAD):
     inv = report.get("investigation")
     if not inv:
@@ -378,7 +387,7 @@ def generate_incident_report(report, mission, output_path, template_path=LETTERH
         _table(doc, srows, [2.6, 2.3, 1.6], head=["What it controls", "Setting", "Parameter"], size=8.5)
 
     _run(_para(doc, after=0, before=6),
-         f"Generated {datetime.now().strftime('%d %b %Y')} from the drone's flight log by the Neosky Drone Diagnostic Platform. "
+         f"Generated {datetime.now().strftime('%d %b %Y')} from the drone's flight log by the Neosky Drone Diagnostic Platform {_app_version()}. "
          "How the verdict is reached: each finding is marked as human (pilot or setup) or system (aircraft) and weighted by whether it caused the "
          "outcome, started it or made it worse. A system error is ruled out only where the log shows that part working. This is an "
          "evidence-based assessment, not a certified accident investigation.", italic=True, size=7.5, color=GREY)

@@ -106,10 +106,14 @@
             position:sticky; top:0; height:100vh; overflow-y:auto;
         }
         .sidenav .brand{
-            display:flex; align-items:center; gap:10px;
-            padding:20px 18px 16px;
+            display:flex; flex-direction:column; align-items:flex-start; gap:6px;
+            padding:22px 18px 16px;
             color:white; font-weight:800; font-size:1.02em;
         }
+        /* full horizontal logo, sized by width so it never gets cropped or squashed */
+        .sidenav .brand .brand-logo{ width:100%; max-width:176px; height:auto; display:block; }
+        .sidenav .brand .brand-emblem{ display:none; width:36px; height:36px; }
+        .sidenav-version{ color:#5b6a86; font-size:0.72em; padding:6px 18px 14px; }
         .sidenav .brand .logo-mark{
             display:inline-flex; align-items:center; justify-content:center;
             width:32px; height:32px; border-radius:10px; flex:0 0 32px;
@@ -284,7 +288,9 @@
 
         @media (max-width:900px){
             .sidenav{ width:62px; flex-basis:62px; }
-            .sidenav .brand span.brand-text, .sidenav .brand .brand-sub, .sidenav a .nav-label, .sidenav-who .who-text{ display:none; }
+            .sidenav .brand span.brand-text, .sidenav .brand .brand-sub, .sidenav a .nav-label, .sidenav-who .who-text, .sidenav .brand .brand-logo, .sidenav-version{ display:none; }
+            .sidenav .brand{ align-items:center; padding:16px 0; }
+            .sidenav .brand .brand-emblem{ display:block; }
             .sidenav a{ justify-content:center; }
             .sidenav-who{ justify-content:center; }
             .wrap{ padding:0 14px; }
@@ -311,11 +317,9 @@
 <div class="app-shell">
     <nav class="sidenav">
         <div class="brand">
-            <span class="logo-mark"><img src="{{ url_for('static', filename='logo-icon.png') }}" alt="Neosky"></span>
-            <span>
-                <span class="brand-text">Neosky</span>
-                <span class="brand-sub">Drone Log Analysis</span>
-            </span>
+            <img class="brand-logo" src="{{ url_for('static', filename='brand/neosky-logo-on-dark.png') }}" alt="Neosky">
+            <img class="brand-emblem" src="{{ url_for('static', filename='brand/neosky-emblem.png') }}" alt="Neosky">
+            <span class="brand-sub">Drone Log Analysis</span>
         </div>
 
         {% if current_user.is_authenticated %}
@@ -326,6 +330,7 @@
                 <a href="{{ url_for('admin.all_drones') }}" class="{{ 'active' if request.endpoint == 'admin.all_drones' }}">{{ icon('fleet') }}<span class="nav-label">Fleet &amp; Drones</span></a>
                 <a href="{{ url_for('admin.all_people') }}" class="{{ 'active' if request.endpoint == 'admin.all_people' }}">{{ icon('people') }}<span class="nav-label">People</span></a>
                 <a href="{{ url_for('admin.users') }}" class="{{ 'active' if request.endpoint == 'admin.users' }}">{{ icon('users') }}<span class="nav-label">Users</span></a>
+                <a href="{{ url_for('admin.bulk_upload') }}" class="{{ 'active' if request.endpoint == 'admin.bulk_upload' }}">{{ icon('upload') }}<span class="nav-label">Upload Folder (Multilog)</span></a>
                 <a href="{{ url_for('admin.export_raw_data') }}">{{ icon('export') }}<span class="nav-label">Multilog Analysis</span></a>
                 <a href="{{ url_for('admin.import_raw_data') }}" class="{{ 'active' if request.endpoint == 'admin.import_raw_data' }}">{{ icon('upload') }}<span class="nav-label">Import Historical Data</span></a>
                 <a href="{{ url_for('admin.audit') }}" class="{{ 'active' if request.endpoint == 'admin.audit' }}">{{ icon('audit') }}<span class="nav-label">Audit Log</span></a>
@@ -337,6 +342,7 @@
             <a href="{{ url_for('auth.logout') }}" class="logout-link">{{ icon('logout') }}<span class="nav-label">Logout</span></a>
         </div>
 
+        <div class="sidenav-version" title="Released {{ app_version.release_date }}{% if app_version.investigator %} · flight investigator v{{ app_version.investigator }}{% endif %}">{{ app_version.label }}</div>
         <div class="sidenav-who">
             <span class="avatar">{{ current_user.full_name[0]|upper }}</span>
             <span class="who-text">

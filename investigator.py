@@ -29,7 +29,7 @@ try:
 except ImportError:  # pragma: no cover
     ZoneInfo = None
 
-VERSION = 1
+VERSION = 2
 G = 9.80665
 
 # ----------------------------------------------------------------------------------------------- dataflash reader
@@ -1104,7 +1104,13 @@ def analyse(L, k):
     return {"S": S, "fig": fig, "kind": kind, "title": title, "evidence": evid, "events": events, "failsafes": failsafes, "F": F,
             "ruled": ruled, "verdict": verdict, "blame": blame, "sequence": sequence, "checks": checks, "phases": phases,
             "contact": contact, "modeContact": mode_contact, "arm_t": arm_t, "pwmMin": pwm_min, "pwmMax": pwm_max,
-            "thr_stick": thr_stick}
+            "thr_stick": thr_stick,
+            "detect": {"att_loss": bool(att_loss), "motor_fault": bool(motor_fault), "thrust_short": bool(thrust_short),
+                       "thrust_loss_err": any(e["kind"] == "err" and e["sub"] == 25 and e["code"] for e in events),
+                       "ekf": bool(ekf_bad), "gps_glitches": len(gps_gl), "pos_jump": bool(pos_jump), "vcc_low": bool(vcc_low),
+                       "sag": bool(sag), "vibration": fig["maxVibe"] > 60 or fig["clips"] > 50,
+                       "prearm": sorted({m["text"] for m in L["texts"] if m["text"].startswith("PreArm")}),
+                       "cold_start_s": round(arm_t, 1) if arm_t and arm_t > 0 else None}}
 
 
 # ----------------------------------------------------------------------------------------------- plain-language report
@@ -1406,8 +1412,29 @@ def investigate(path, tz_name=None):
         r = min(S, key=lambda x: abs(x["t"] - fs["t"]))
         locs.append([fs["name"], r["lat"], r["lon"], r["amsl"], fs["t"]])
     T = lambda t: ("T+" + fmt_t(t - arm)) if t is not None else ""  # noqa: E731
+    D = A["detect"]
+    fs_events = []
+    for fs in A["failsafes"]:
+        r = min(S, key=lambda x: abs(x["t"] - fs["t"]))
+        fs_events.append({"name": fs["name"], "sub": fs["sub"], "t_s": round(fs["t"] - arm, 1),
+                          "airborne_s": round(fs["t"] - f["takeoff"], 1) if f["takeoff"] else None,
+                          "dist_m": round(math.hypot(r["e"], r["n"]), 1), "height_m": _r(r["h"]),
+                          "action": fs["action"], "overridden": bool(fs["override"])})
+    flags = {
+        "crash": A["kind"] == "crash", "log_end_in_air": A["kind"] == "log_end", "hard_landing": A["kind"] == "hard_landing",
+        "thrust_loss": D["motor_fault"] or D["thrust_short"] or D["thrust_loss_err"],
+        "motor_issue": D["motor_fault"] or D["att_loss"],
+        "gps_issue": D["gps_glitches"] > 0 or D["pos_jump"],
+        "ekf_issue": D["ekf"],
+        "prearm_issues": len(D["prearm"]), "prearm_messages": D["prearm"][:10],
+        "vibration_issue": D["vibration"], "power_issue": D["vcc_low"] or D["sag"],
+        "battery_failsafe": any(e["sub"] == 6 for e in fs_events),
+        "gcs_failsafe": any(e["sub"] == 8 for e in fs_events),
+        "rc_failsafe": any(e["sub"] == 5 for e in fs_events),
+        "cold_start_s": D["cold_start_s"],
+    }
     return {
-        "version": VERSION, "kind": A["kind"], "title": A["title"], "verdict": A["verdict"], "blame": A["blame"],
+        "version": VERSION, "kind": A["kind"], "flags": flags, "failsafe_events": fs_events, "title": A["title"], "verdict": A["verdict"], "blame": A["blame"],
         "report": rep,
         "findings": [{**x, "t": T(x["t"]) if x["t"] else ""} for x in A["F"]],
         "ruled": A["ruled"], "evidence": A["evidence"],

@@ -117,6 +117,11 @@ class Upload(db.Model):
     # hides report/3D/export actions that need one.
     source = db.Column(db.String(20), nullable=False, default="upload")
 
+    # Admin folder (bulk) upload: which batch this file arrived in, and where the file waits on disk until the
+    # background worker picks it up (cleared once it's archived). Both null for normal single uploads.
+    batch_id = db.Column(db.String(40), nullable=True, index=True)
+    pending_path = db.Column(db.String(500), nullable=True)
+
     # Root-cause conclusion, required before downloads (Word/Excel/3D video)
     # unlock on the report page -- CONCLUSION_CHOICES below is the fixed
     # set; "other" pairs with conclusion_note for free text.
@@ -187,6 +192,10 @@ class AnalysisResult(db.Model):
     # (Upload.source == "imported"), this *is* the row's data verbatim --
     # there's no separate process_log() report behind it.
     multilog_json = db.Column(db.Text, nullable=True)
+
+    # Small per-flight record for the dashboards (app/fleet.py): crash/verdict, averages inputs, failsafe timing
+    # and distance, issue flags. Derived, cached, recomputed whenever app/fleet.FLEET_VERSION changes.
+    fleet_json = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 

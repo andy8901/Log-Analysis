@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Upload a Folder of Logs{% endblock %}
+{% block content %}
+<style>
+    .bu-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:12px 16px; }
+    .bu-drop{ border:2px dashed var(--input-border); border-radius:14px; padding:22px; text-align:center; margin:14px 0; }
+    .bu-drop.over{ border-color:var(--accent); background:var(--accent-light); }
+    .bu-progress{ height:10px; background:var(--table-border); border-radius:6px; overflow:hidden; margin:10px 0; }
+    .bu-progress i{ display:block; height:100%; width:0; background:var(--accent); transition:width .2s; }
+    .bu-table td{ font-size:0.9em; }
+    #buForm [hidden]{ display:none !important; } #buStart:disabled{ opacity:0.5; cursor:not-allowed; }
+    .st-queued,.st-uploading{ color:var(--text-muted); } .st-processing{ color:var(--warn); } .st-completed{ color:var(--good); } .st-failed,.st-error{ color:var(--danger); }
+</style>
+<div class="card">
+    <h1>Upload a Folder of Logs</h1>
+    <p style="color:var(--text-muted);max-width:90ch;">
+        Choose a whole folder (sub-folders included) of <code>.bin</code>, <code>.log</code> or <code>.tlog</code> files. Files are sent one by one and
+        analysed in the background exactly like a normal upload: full report, flight investigation (human or system error), multilog fields
+        and dashboard figures. You can leave this page; progress is kept on the server. Each batch can be exported on its own as a Multilog Excel.
+    </p>
+
+    <form id="buForm" onsubmit="return false;">
+        <div class="bu-grid">
+            <div class="input-group"><label>Department</label>
+                <select id="buDept" required><option value="">Choose…</option>{% for d in departments %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select></div>
+            <div class="input-group"><label>Drone model</label>
+                <select id="buModel"><option value="">Unknown / mixed</option>{% for m in model_choices %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
+            <div class="input-group"><label>How to find each drone's MSN</label>
+                <select id="buMode">{% for v, l in msn_modes %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
+            <div class="input-group" id="buMsnWrap" hidden><label>MSN for every file</label><input id="buMsn" type="text" placeholder="e.g. 064"></div>
+            <div class="input-group"><label>Flight date (optional)</label><input id="buDate" type="date"></div>
+            <div class="input-group"><label>Reported by (optional)</label><input id="buBy" type="text" placeholder="{{ current_user.full_name }}"></div>
+        </div>
+        <div class="bu-drop" id="buDrop">
+            <p style="margin:0 0 10px;"><strong>Choose a folder</strong> or drop files here</p>
+            <input type="file" id="buFolder" webkitdirectory directory multiple hidden>
+            <input type="file" id="buFiles" multiple accept=".bin,.log,.tlog,.BIN,.LOG,.TLOG" hidden>
+            <button class="btn" type="button" onclick="document.getElementById('buFolder').click()">Choose folder…</button>
+            <button class="btn secondary" type="button" onclick="document.getElementById('buFiles').click()">Choose files…</button>
+            <p id="buPicked" style="color:var(--text-muted);margin:10px 0 0;"></p>
+        </div>
+        <button class="btn" id="buStart" type="button" disabled>Upload and analyse</button>
+        <span id="buMsg" style="margin-left:10px;color:var(--text-muted);"></span>
+    </form>
+
+    <div id="buRun" hidden>
+        <div class="bu-progress"><i id="buBar"></i></div>
+        <div id="buCount" style="color:var(--text-muted);"></div>
+        <p id="buLinks" style="margin:10px 0;"></p>
+        <div style="overflow-x:auto;"><table class="bu-table"><thead><tr><th>File</th><th>MSN</th><th>Status</th><th>Result</th></tr></thead><tbody id="buRows"></tbody></table></div>
+    </div>
+
+    <h2 style="margin-top:28px;">Recent batches</h2>
+    {% if queue_size %}<p style="color:var(--text-muted);">{{ queue_size }} file(s) waiting in the background queue.</p>{% endif %}
+    <table>
+        <thead><tr><th>Batch</th><th>Department</th><th>Files</th><th>Done</th><th>Waiting</th><th>Failed</th><th></th></tr></thead>
+        <tbody>
+        {% for b in batches %}
+        <tr><td><code>{{ b.id }}</code></td><td>{{ b.department }}</td><td>{{ b.files }}</td><td>{{ b.done }}</td><td>{{ b.waiting }}</td><td>{{ b.failed }}</td>
+            <td style="white-space:nowrap;"><a class="btn secondary" href="{{ url_for('admin.bulk_upload', batch=b.id) }}">Progress</a>
+                <a class="btn secondary" href="{{ url_for('admin.export_raw_data', batch=b.id) }}">Multilog Excel</a></td></tr>
+        {% else %}<tr><td colspan="7" style="color:var(--text-muted);">No folder uploads yet.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+    <form method="POST" action="{{ url_for('admin.bulk_upload_resume') }}" style="margin-top:10px;"><button class="btn secondary" type="submit">Resume waiting files</button>
+        <span style="color:var(--text-muted);font-size:0.85em;">Only needed if the server was restarted while files were waiting.</span></form>
+</div>
+
+<script>
+(function(){
+    const $ = (id) => document.getElementById(id);
+    const OK = /\.(bin|log|tlog)$/i;
+    let files = [];
+    $('buMode').addEventListener('change', () => { $('buMsnWrap').hidden = $('buMode').value !== 'fixed'; });
+    function pick(list){
+        files = [...list].filter(f => OK.test(f.name));
+        const skipped = list.length - files.length;
+        const mb = files.reduce((a, f) => a + f.size, 0) / 1e6;
+        $('buPicked').textContent = files.length ? `${files.length} log file(s), ${mb.toFixed(0)} MB` + (skipped ? ` (${skipped} other file(s) ignored)` : '') : 'No .bin/.log/.tlog files found there.';
+        $('buStart').disabled = !files.length;
+    }
+    $('buFolder').addEventListener('change', e => pick(e.target.files));
+    $('buFiles').addEventListener('change', e => pick(e.target.files));
+    const drop = $('buDrop');
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', e => pick(e.dataTransfer.files));
+
+    const rows = {};
+    function row(key, file, msn, st, result, url){
+        let tr = rows[key];
+        if (!tr) { tr = document.createElement('tr'); $('buRows').appendChild(tr); rows[key] = tr; }
+        tr.innerHTML = `<td>${file}</td><td>${msn || ''}</td><td class="st-${st}">${st}</td><td>${url ? `<a href="${url}">${result || 'Open report'}</a>` : (result || '')}</td>`;
+    }
+    let batch = null, sent = 0, total = 0;
+    async function start(){
+        const dept = $('buDept').value;
+        if (!dept) { $('buMsg').textContent = 'Choose a department first.'; return; }
+        if ($('buMode').value === 'fixed' && !$('buMsn').value.trim()) { $('buMsg').textContent = 'Enter the MSN.'; return; }
+        $('buStart').disabled = true; $('buRun').hidden = false; $('buMsg').textContent = '';
+        const fd0 = new FormData(); fd0.append('department_id', dept); fd0.append('count', files.length);
+        const r0 = await fetch('{{ url_for("admin.bulk_upload_new") }}', { method: 'POST', body: fd0 });
+        const j0 = await r0.json(); if (!r0.ok) { $('buMsg').textContent = j0.error || 'Could not start.'; $('buStart').disabled = false; return; }
+        batch = j0.batch_id; total = files.length; sent = 0;
+        $('buLinks').innerHTML = `Batch <code>${batch}</code> &middot; <a href="?batch=${batch}">Progress page</a> &middot; <a href="{{ url_for('admin.export_raw_data') }}?batch=${batch}">Multilog Excel for this batch</a>`;
+        poll();
+        for (const f of files) {
+            const key = 'up' + sent, rel = f.webkitRelativePath || f.name;
+            row(key, rel, '', 'uploading');
+            const fd = new FormData();
+            fd.append('department_id', dept); fd.append('drone_model', $('buModel').value); fd.append('msn_mode', $('buMode').value);
+            fd.append('msn', $('buMsn').value.trim()); fd.append('flight_date', $('buDate').value); fd.append('reported_by', $('buBy').value);
+            fd.append('rel_path', rel); fd.append('log_file', f, f.name);
+            try {
+                const r = await fetch(`{{ url_for('admin.bulk_upload') }}/${batch}/file`, { method: 'POST', body: fd });
+                const j = await r.json();
+                if (r.ok) { rows['id' + j.upload_id] = rows[key]; delete rows[key]; row('id' + j.upload_id, rel, j.msn, 'queued'); }
+                else row(key, rel, '', 'error', j.error || r.statusText);
+            } catch (e) { row(key, rel, '', 'error', String(e)); }
+            sent++; progress();
+        }
+    }
+    let last = null;
+    function progress(){
+        const done = last ? last.files.filter(f => f.status === 'completed' || f.status === 'failed').length : 0;
+        $('buBar').style.width = (total ? Math.round(((sent + done) / (2 * total)) * 100) : 0) + '%';
+        $('buCount').textContent = `${sent} of ${total} uploaded · ${done} analysed` + (last && last.queue ? ` · ${last.queue} in the queue` : '');
+    }
+    async function poll(){
+        if (!batch) return;
+        try {
+            const r = await fetch(`{{ url_for('admin.bulk_upload') }}/${batch}/status`); last = await r.json();
+            const names = { true: 'CRASH' };
+            last.files.forEach(f => row('id' + f.id, f.file, f.msn, f.status,
+                f.status === 'failed' ? (f.error || 'failed') : f.status === 'completed' ? ((f.crash ? 'Crash · ' : '') + (f.headline || f.report_status || 'Open report') + (f.verdict ? ` · suggested ${f.verdict === 'human' ? 'human' : 'system'} error` : '')) : '', f.url));
+            if (!total) total = last.files.length, sent = total;
+            progress();
+            const pending = last.files.some(f => f.status === 'queued' || f.status === 'processing') || sent < total;
+            if (pending) setTimeout(poll, 3000);
+        } catch (e) { setTimeout(poll, 5000); }
+    }
+    $('buStart').addEventListener('click', start);
+    {% if batch_id %}batch = {{ batch_id|tojson }}; $('buRun').hidden = false; $('buLinks').innerHTML = `Batch <code>${batch}</code> &middot; <a href="{{ url_for('admin.export_raw_data') }}?batch=${batch}">Multilog Excel for this batch</a>`; poll();{% endif %}
+})();
+</script>
+{% endblock %}
