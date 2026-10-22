@@ -43,10 +43,12 @@ def create_app(config_object=Config):
     from app.auth import auth_bp
     from app.routes_dept import dept_bp
     from app.routes_admin import admin_bp
+    from app.api import api_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dept_bp)
     app.register_blueprint(admin_bp, url_prefix="/admin")
+    app.register_blueprint(api_bp)
 
     @app.context_processor
     def inject_app_version():

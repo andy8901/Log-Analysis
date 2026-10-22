@@ -437,6 +437,14 @@ A Render Blueprint (`render.yaml`) is also included if you'd rather use
 a PaaS despite the persistent-disk cost tradeoff noted above — it builds
 and runs the same `Dockerfile`.
 
+## Read-only API for the Neosky Live Twin
+
+The Live Twin (separate app, github.com/andy8901/Digitaltwin) can show pilot/system error totals and analysed-log
+counts from this app. Set `LIVE_TWIN_API_KEY` in `.env` (the same value as `LOG_ANALYSIS_API_KEY` in the twin) to
+switch on `GET /api/v1/drone-stats[?msn=064]` (header `X-API-Key`). It returns, per drone MSN: logs uploaded,
+analysed, failed, crashes, confirmed pilot/system/undetermined/other conclusions, logs not concluded yet, and the
+investigator's suggested verdicts nobody has confirmed. Leave the key empty and the API stays off (404).
+
 ## Known limitation: synchronous processing
 
 Analysis still runs synchronously inside the upload request (as in the
