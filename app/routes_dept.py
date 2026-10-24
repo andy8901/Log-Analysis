@@ -174,17 +174,20 @@ def upload():
 
 
 def known_customers():
-    """Distinct customer names already on file across every drone -- backs
-    the "Customer" field's suggestion list on the upload forms (see
-    process_and_save_log()'s customer_name handling below)."""
-    rows = (
-        db.session.query(Drone.customer_name)
-        .filter(Drone.customer_name.isnot(None), Drone.customer_name != "")
-        .distinct()
-        .order_by(Drone.customer_name)
-        .all()
-    )
-    return [r[0] for r in rows]
+    """Distinct customer names already on file -- backs the "Customer"
+    field's suggestion list on the upload forms (see process_and_save_log()'s
+    customer_name handling below) and the Organization Overview's Customer
+    filter. Union of Drone.customer_name (set by an actual upload) and
+    Warranty.customer_name (bulk-imported from the external tracker --
+    admin.import_warranty()/import_warranty_sheet()): the tracker covers
+    plenty of customers whose drones have never had a log uploaded through
+    this app yet, so a name that only exists there still needs to show up
+    here, not just once a drone happens to be tagged with it."""
+    from app.models import Warranty
+
+    drone_names = {r[0] for r in db.session.query(Drone.customer_name).filter(Drone.customer_name.isnot(None), Drone.customer_name != "").distinct()}
+    warranty_names = {r[0] for r in db.session.query(Warranty.customer_name).distinct()}
+    return sorted(drone_names | warranty_names)
 
 
 def process_and_save_log(file, department, drone_model, msn, flight_date, reported_by, user, customer_name=None):

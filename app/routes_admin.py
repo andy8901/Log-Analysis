@@ -139,7 +139,7 @@ def dashboard():
         for row in rows
     ] if not any_filter_active else None
 
-    all_customers = sorted({(d.customer_name or "Unassigned") for d in all_drones_list})
+    all_customers = known_customers()
 
     return render_template(
         "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
