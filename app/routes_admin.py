@@ -344,18 +344,27 @@ def _find_import_column(columns, field):
 
 
 _MSN_IN_FILENAME_RE = re.compile(r"MSN[_\s-]?(\d+)", re.I)
+# A second, organization-specific convention seen in practice: the MSN as
+# a bare number directly in front of "_log" (no "MSN" word at all), e.g.
+# "NIMBLE CRPF 009_log_10_2025-6-26-11-01-22.bin" -- MSN 009. Tried only
+# after the "MSN_<number>" pattern above finds nothing.
+_MSN_BEFORE_LOG_RE = re.compile(r"(\d+)_log(?![a-z])", re.I)
 
 
 def _extract_msn_from_filename(name):
     """Some organizations' own log-naming convention embeds the drone's
-    MSN right in the filename (e.g. "MSN_064_log_23_2026-2-21...bin") --
-    a per-row fallback tried when there's no MSN column at all, named or
-    positional. Returns None (not a guess) for a filename that doesn't
-    match, e.g. ones filed under an incident folder name instead
-    ("Crash_log_...", "Testing Logs (...)_log_...")."""
+    MSN right in the filename -- either "MSN_064_log_23_2026-2-21...bin"
+    or "<Model> <Customer> 064_log_23_...bin" (MSN directly before
+    "_log", no "MSN" word) -- a per-row fallback tried when there's no MSN
+    column at all, named or positional. Returns None (not a guess) for a
+    filename that doesn't match either, e.g. ones filed under an incident
+    folder name instead ("Crash_log_...", "Testing Logs (...)_log_...")."""
     if not name:
         return None
     m = _MSN_IN_FILENAME_RE.search(name)
+    if m:
+        return m.group(1)
+    m = _MSN_BEFORE_LOG_RE.search(name)
     return m.group(1) if m else None
 
 
