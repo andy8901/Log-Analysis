@@ -41,6 +41,7 @@
         <select name="location" id="locationFilterSelect" onchange="this.form.submit()" style="max-width:220px;" {{ 'disabled title="Set FACTORY_LAT/FACTORY_LON in .env to enable"' if not factory_configured }}>
             <option value="">All locations</option>
             <option value="Factory" {{ 'selected' if selected_location == 'Factory' }}>In Factory</option>
+            <option value="Karnataka" {{ 'selected' if selected_location == 'Karnataka' }}>Karnataka (all districts)</option>
             <optgroup label="Karnataka districts">
                 {% for dname in karnataka_districts %}
                 {% set loc_value = 'Karnataka: ' + dname %}

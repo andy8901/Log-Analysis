@@ -612,15 +612,25 @@ def location_for_upload(upload, factory_lat, factory_lon, radius_km, geo_budget=
 
 def uploads_for_location(uploads, location, factory_lat, factory_lon, radius_km, geo_budget=None):
     """Scopes an already-fetched upload list to one location bucket --
-    see location_for_upload()."""
+    see location_for_upload(). "Karnataka" is a whole-state rollup: it
+    matches a flight in *any* Karnataka district (location_for_upload()
+    itself only ever returns a specific district, e.g. "Karnataka:
+    Bengaluru Urban", never the bare state name), rather than requiring a
+    second, separate filter per district."""
     if not location:
         return uploads
     if geo_budget is None:
         geo_budget = [DEFAULT_GEO_LOOKUP_BUDGET]
-    return [
-        u for u in uploads
-        if u.status == "completed" and location_for_upload(u, factory_lat, factory_lon, radius_km, geo_budget) == location
-    ]
+
+    def _matches(u):
+        if u.status != "completed":
+            return False
+        loc = location_for_upload(u, factory_lat, factory_lon, radius_km, geo_budget)
+        if location == "Karnataka":
+            return bool(loc) and loc.startswith("Karnataka:")
+        return loc == location
+
+    return [u for u in uploads if _matches(u)]
 
 
 def location_breakdown(uploads, factory_lat, factory_lon, radius_km, geo_budget=None):
