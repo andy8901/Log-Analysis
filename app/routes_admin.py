@@ -20,7 +20,7 @@ from app.stats import (
     investigation_category_breakdown, issue_severity_breakdown, location_breakdown,
     multilog_aggregate, person_aggregate, recent_anomalies, today_start, todays_highlight,
     top_drones_from_uploads, trend_pct, period_window_counts, uploads_for_customer,
-    uploads_for_drone, uploads_for_location, ytd_start,
+    uploads_for_drone, uploads_for_drone_model, uploads_for_location, ytd_start,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -48,6 +48,7 @@ def dashboard():
 
     selected_drone_id = request.args.get("drone_id", type=int)
     selected_drone = next((d for d in all_drones_list if d.id == selected_drone_id), None) if selected_drone_id else None
+    selected_drone_model = request.args.get("drone_model") or None
     selected_department_id = request.args.get("filter_department_id", type=int)
     selected_department = next((d for d in departments if d.id == selected_department_id), None) if selected_department_id else None
     selected_customer = request.args.get("customer") or None
@@ -56,21 +57,28 @@ def dashboard():
     factory_lat = current_app.config.get("FACTORY_LAT")
     factory_lon = current_app.config.get("FACTORY_LON")
     factory_radius_km = current_app.config.get("FACTORY_RADIUS_KM")
+    # Shared across every location lookup this request makes (the scoping
+    # below, plus the location_breakdown() chart further down) so the
+    # total number of brand-new (not-yet-cached) reverse-geocoding calls
+    # stays bounded for the whole page load, not per call site -- see
+    # stats.DEFAULT_GEO_LOOKUP_BUDGET / app/geo.py.
+    geo_budget = [8]
 
     # Everything below the top totals row (the "interactive analytics"
     # panel: trend charts, donuts, top drones, anomalies, averages) is
     # computed from this scoped list -- the org-wide totals row above it
     # intentionally stays unscoped, since "how many drones/departments
     # exist" shouldn't change just because one dimension is filtered.
-    # The four dimensions (drone, department, customer, location) compose:
-    # each is just a filter over whatever the previous one already
-    # narrowed down to.
+    # The five dimensions (drone, drone model, department, customer,
+    # location) compose: each is just a filter over whatever the previous
+    # one already narrowed down to.
     def _scope(uploads):
         uploads = uploads_for_drone(uploads, selected_drone_id)
+        uploads = uploads_for_drone_model(uploads, selected_drone_model)
         if selected_department_id:
             uploads = [u for u in uploads if u.department_id == selected_department_id]
         uploads = uploads_for_customer(uploads, selected_customer)
-        uploads = uploads_for_location(uploads, selected_location, factory_lat, factory_lon, factory_radius_km)
+        uploads = uploads_for_location(uploads, selected_location, factory_lat, factory_lon, factory_radius_km, geo_budget)
         return uploads
 
     scoped_completed_uploads = _scope(all_completed_uploads)
@@ -133,13 +141,18 @@ def dashboard():
     conclusion_counts = conclusion_breakdown(scoped_completed_uploads)
     today_highlight = todays_highlight(all_completed_uploads)
 
-    any_filter_active = bool(selected_drone_id or selected_department_id or selected_customer or selected_location)
+    any_filter_active = bool(
+        selected_drone_id or selected_drone_model or selected_department_id
+        or selected_customer or selected_location
+    )
     dept_chart = [
         {"name": row["department"].name, "flights": row["completed"], "anomalies": row["critical"] + row["warning"]}
         for row in rows
     ] if not any_filter_active else None
 
     all_customers = known_customers()
+
+    from app.geo import INDIAN_STATES_AND_UTS, KARNATAKA_DISTRICTS
 
     return render_template(
         "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
@@ -149,12 +162,14 @@ def dashboard():
         conclusion_counts=conclusion_counts, today_highlight=today_highlight,
         dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
         all_drones=all_drones_list, selected_drone=selected_drone,
+        all_drone_models=DRONE_MODEL_CHOICES, selected_drone_model=selected_drone_model,
         departments=departments, selected_department=selected_department,
         all_customers=all_customers, selected_customer=selected_customer,
         selected_location=selected_location,
+        karnataka_districts=KARNATAKA_DISTRICTS, indian_states=INDIAN_STATES_AND_UTS,
         factory_configured=bool(factory_lat is not None and factory_lon is not None),
         customer_chart=customer_breakdown(scoped_completed_uploads),
-        location_chart=location_breakdown(scoped_completed_uploads, factory_lat, factory_lon, factory_radius_km),
+        location_chart=location_breakdown(scoped_completed_uploads, factory_lat, factory_lon, factory_radius_km, geo_budget),
     )
 
 
