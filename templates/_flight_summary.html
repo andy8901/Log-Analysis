@@ -220,7 +220,7 @@
     if(takeoffs.length && typeof L !== 'undefined' && mapEl){
         try {
             const map = L.map('takeoffMap').setView([takeoffs[0].lat, takeoffs[0].lon], 10);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OpenStreetMap' }).addTo(map);
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri World Imagery', maxZoom: 20 }).addTo(map);
             const markers = [];
             takeoffs.forEach(t => {
                 const m = L.marker([t.lat, t.lon]).addTo(map)
