@@ -30,11 +30,25 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 
 from flask import current_app
 
 _RCLONE_TIMEOUT_S = 120
+
+# shutil.copy2() to a DRIVE_SYNC_ROOT folder has no timeout of its own --
+# if that folder is actually a mapped/synced network drive letter (e.g.
+# Google Drive for Desktop's "G:\" or "I:\") and it's disconnected or
+# signed out, the copy can block for however long Windows' own SMB/
+# reparse-point timeout takes, which is easily a minute or more. A single
+# upload makes up to four of these calls in a row (the raw log, plus a
+# generated Word/Excel/incident report each), so that stacks into exactly
+# the "upload keeps loading for 1-3 minutes" symptom. Bounded well under
+# that so an unreachable drive is a quick, logged no-op instead -- the
+# same "always best-effort, never blocks the upload" guarantee the
+# rclone path already has via its subprocess timeout.
+_FOLDER_COPY_TIMEOUT_S = 10
 
 
 def _rclone_remote():
@@ -70,12 +84,18 @@ def diagnostics():
         }
 
     root = _folder_root()
+    exists = False
+    if root:
+        try:
+            exists = _run_with_timeout(lambda: os.path.isdir(root), timeout_message=f"checking {root!r}")
+        except Exception:
+            exists = False
     return {
         "configured": bool(root),
         "mode": "folder" if root else None,
         "path": root,
         "abs_path": os.path.abspath(root) if root else None,
-        "exists": os.path.isdir(root) if root else False,
+        "exists": exists,
         "exists_label": None,
         "env_overridden": current_app.config.get("DRIVE_SYNC_ROOT_ENV_OVERRIDDEN", False),
         "prior_env_value": current_app.config.get("DRIVE_SYNC_ROOT_PRIOR_ENV_VALUE"),
@@ -96,11 +116,15 @@ def test_write():
         return False, "Drive sync is not configured (set DRIVE_SYNC_ROOT or DRIVE_SYNC_RCLONE_REMOTE in .env)."
 
     marker = os.path.join(root, f".neosky_sync_test_{int(time.time())}.tmp")
-    try:
+
+    def _write_and_remove():
         os.makedirs(root, exist_ok=True)
         with open(marker, "w") as f:
             f.write("Neosky Drone Diagnostic Platform -- sync test file, safe to delete.\n")
         os.remove(marker)
+
+    try:
+        _run_with_timeout(_write_and_remove, timeout_message=f"writing to {root!r}")
         return True, f"Success -- wrote and removed a test file in {os.path.abspath(root)}."
     except Exception as exc:
         return False, f"Failed to write to {os.path.abspath(root)}: {exc}"
@@ -143,6 +167,46 @@ def _run_rclone(args):
         return False, str(exc)
 
 
+def _run_with_timeout(func, timeout_s=_FOLDER_COPY_TIMEOUT_S, timeout_message="operation"):
+    """Runs func() on a background (daemon) thread, bounded by timeout_s,
+    and returns its result -- any plain filesystem call (os.path.isdir,
+    os.makedirs, open/write, shutil.copy2, ...) against a path that's
+    actually a disconnected/stale network drive letter can block for far
+    longer than this app should ever wait on it, and Python has no way to
+    forcibly kill a blocked OS call -- so a timed-out thread is abandoned
+    running rather than cancelled. That's harmless here: every caller only
+    reads or writes within DRIVE_SYNC_ROOT, and this process exits
+    independently of that thread eventually finishing or erroring out on
+    its own."""
+    outcome = {}
+
+    def _do():
+        try:
+            outcome["result"] = func()
+        except Exception as exc:
+            outcome["error"] = exc
+
+    t = threading.Thread(target=_do, daemon=True)
+    t.start()
+    t.join(timeout_s)
+
+    if t.is_alive():
+        raise TimeoutError(f"{timeout_message} did not finish within {timeout_s}s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")
+
+
+def _copy_with_timeout(local_path, dest_dir, dest_path):
+    def _do_copy():
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.copy2(local_path, dest_path)
+
+    _run_with_timeout(
+        _do_copy, timeout_message=f"folder copy to {dest_dir!r} (is it a connected/synced drive right now?)",
+    )
+
+
 def upload_to_drive(local_path, department_name, msn, dest_filename, kind="Reports"):
     """Best-effort: copies local_path to
     <destination>/<Department>/<MSN>/<kind>/dest_filename, via whichever
@@ -165,9 +229,8 @@ def upload_to_drive(local_path, department_name, msn, dest_filename, kind="Repor
             return None
 
         dest_dir = os.path.join(root, department_name, msn or "unassigned", kind)
-        os.makedirs(dest_dir, exist_ok=True)
         dest_path = os.path.join(dest_dir, dest_filename)
-        shutil.copy2(local_path, dest_path)
+        _copy_with_timeout(local_path, dest_dir, dest_path)
         return dest_path
 
     except Exception:
