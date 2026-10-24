@@ -13,6 +13,14 @@
             {% endfor %}
         </select>
 
+        <label for="droneModelFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Drone Type:</label>
+        <select name="drone_model" id="droneModelFilterSelect" onchange="this.form.submit()" style="max-width:160px;">
+            <option value="">All types</option>
+            {% for m in all_drone_models %}
+            <option value="{{ m }}" {{ 'selected' if selected_drone_model == m }}>{{ m }}</option>
+            {% endfor %}
+        </select>
+
         <label for="droneFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Drone:</label>
         <select name="drone_id" id="droneFilterSelect" onchange="this.form.submit()" style="max-width:280px;">
             <option value="">All drones</option>
@@ -30,13 +38,23 @@
         </select>
 
         <label for="locationFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Location:</label>
-        <select name="location" id="locationFilterSelect" onchange="this.form.submit()" style="max-width:180px;" {{ 'disabled title="Set FACTORY_LAT/FACTORY_LON in .env to enable"' if not factory_configured }}>
+        <select name="location" id="locationFilterSelect" onchange="this.form.submit()" style="max-width:220px;" {{ 'disabled title="Set FACTORY_LAT/FACTORY_LON in .env to enable"' if not factory_configured }}>
             <option value="">All locations</option>
-            <option value="Factory" {{ 'selected' if selected_location == 'Factory' }}>Factory (internal testing)</option>
-            <option value="Field" {{ 'selected' if selected_location == 'Field' }}>Field (customer sites)</option>
+            <option value="Factory" {{ 'selected' if selected_location == 'Factory' }}>In Factory</option>
+            <optgroup label="Karnataka districts">
+                {% for dname in karnataka_districts %}
+                {% set loc_value = 'Karnataka: ' + dname %}
+                <option value="{{ loc_value }}" {{ 'selected' if selected_location == loc_value }}>{{ dname }}</option>
+                {% endfor %}
+            </optgroup>
+            <optgroup label="Other Indian States/UTs">
+                {% for sname in indian_states %}
+                <option value="{{ sname }}" {{ 'selected' if selected_location == sname }}>{{ sname }}</option>
+                {% endfor %}
+            </optgroup>
         </select>
 
-        {% if selected_drone or selected_department or selected_customer or selected_location %}
+        {% if selected_drone or selected_drone_model or selected_department or selected_customer or selected_location %}
         <a class="btn secondary" style="padding:5px 12px;font-size:0.85em;" href="{{ url_for('admin.dashboard') }}">Clear</a>
         {% endif %}
     </form>
@@ -89,13 +107,14 @@
         <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ totals.logs_today }}</h2></div>
         <div class="metric-card" style="{{ 'background:#7f1d1d;' if totals.crashes_total }}"><h4>Crashes Till Today</h4><h2>{{ totals.crashes_total }}</h2>{% if totals.crashes_today %}<span class="metric-trend down">{{ totals.crashes_today }} today</span>{% endif %}</div>
     </div>
-    {% if selected_drone or selected_department or selected_customer or selected_location %}
+    {% if selected_drone or selected_drone_model or selected_department or selected_customer or selected_location %}
     <p style="text-align:center;color:var(--text-muted);font-size:0.9em;margin-top:-10px;">
         Showing analytics for
         {%- if selected_department %} <strong>{{ selected_department.name }}</strong>{% endif %}
+        {%- if selected_drone_model %} <strong>{{ selected_drone_model }}</strong> drones{% endif %}
         {%- if selected_drone %} <strong>{{ selected_drone.msn }} &middot; {{ selected_drone.model }}</strong>{% endif %}
         {%- if selected_customer %} customer <strong>{{ selected_customer }}</strong>{% endif %}
-        {%- if selected_location %} <strong>{{ 'Factory' if selected_location == 'Factory' else 'Field' }}</strong> flights{% endif %}
+        {%- if selected_location %} <strong>{{ selected_location }}</strong> flights{% endif %}
         only &mdash; totals above stay organization-wide.
     </p>
     {% endif %}

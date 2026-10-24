@@ -567,12 +567,26 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     return r * 2 * math.asin(math.sqrt(a))
 
 
-def location_for_upload(upload, factory_lat, factory_lon, radius_km):
+# Default cap on brand-new (not-yet-cached) reverse-geocoding lookups a
+# single call into the functions below will make -- keeps a page load
+# bounded even when many flights have never been classified yet, since
+# each live lookup is rate-limited to ~1/second (see app/geo.py). Callers
+# that process the same scope more than once in one request (e.g. the
+# admin dashboard's filtered-list-plus-breakdown-chart) should share one
+# budget list across those calls instead of letting each default its own,
+# so the total stays bounded request-wide, not per-call.
+DEFAULT_GEO_LOOKUP_BUDGET = 8
+
+
+def location_for_upload(upload, factory_lat, factory_lon, radius_km, geo_budget=None):
     """"Factory" if this flight's takeoff point is within radius_km of the
-    given factory coordinates, "Field" if it has a takeoff point outside
-    that radius, or None if this flight has no GPS takeoff point to
-    classify by (and so can't be placed in either bucket) or the factory
-    coordinates aren't configured (FACTORY_LAT/FACTORY_LON in .env)."""
+    given factory coordinates; otherwise a Karnataka district ("Karnataka:
+    <district>") or another Indian state's name, from reverse-geocoding
+    the takeoff point (see app/geo.py) -- "Unclassified" if that hasn't
+    been resolved yet (not cached, and geo_budget's live-lookup allowance
+    for this request is used up or geocoding simply failed). None if this
+    flight has no GPS takeoff point at all, or the factory coordinates
+    aren't configured (FACTORY_LAT/FACTORY_LON in .env)."""
     if factory_lat is None or factory_lon is None:
         return None
     if not upload.analysis:
@@ -582,33 +596,48 @@ def location_for_upload(upload, factory_lat, factory_lon, radius_km):
     lat, lon = summary.get("home_lat"), summary.get("home_lon")
     if lat is None or lon is None:
         return None
-    return "Factory" if _haversine_km(lat, lon, factory_lat, factory_lon) <= radius_km else "Field"
+    if _haversine_km(lat, lon, factory_lat, factory_lon) <= radius_km:
+        return "Factory"
+
+    if geo_budget is None:
+        geo_budget = [DEFAULT_GEO_LOOKUP_BUDGET]
+    from app.geo import resolve as geo_resolve
+    state, district = geo_resolve(lat, lon, geo_budget)
+    if state and state.strip().lower() == "karnataka":
+        return f"Karnataka: {district or 'district unresolved'}"
+    if state:
+        return state
+    return "Unclassified"
 
 
-def uploads_for_location(uploads, location, factory_lat, factory_lon, radius_km):
-    """Scopes an already-fetched upload list to one location bucket
-    ("Factory" or "Field") -- see location_for_upload()."""
+def uploads_for_location(uploads, location, factory_lat, factory_lon, radius_km, geo_budget=None):
+    """Scopes an already-fetched upload list to one location bucket --
+    see location_for_upload()."""
     if not location:
         return uploads
+    if geo_budget is None:
+        geo_budget = [DEFAULT_GEO_LOOKUP_BUDGET]
     return [
         u for u in uploads
-        if u.status == "completed" and location_for_upload(u, factory_lat, factory_lon, radius_km) == location
+        if u.status == "completed" and location_for_upload(u, factory_lat, factory_lon, radius_km, geo_budget) == location
     ]
 
 
-def location_breakdown(uploads, factory_lat, factory_lon, radius_km):
-    """Counts of completed flights by location bucket (Factory/Field),
-    plus "Unclassified" for ones with no GPS takeoff point -- backs the
-    Organization Overview's location dimension. Empty dict if the factory
-    coordinates aren't configured."""
+def location_breakdown(uploads, factory_lat, factory_lon, radius_km, geo_budget=None):
+    """Counts of completed flights by location bucket (Factory / a
+    Karnataka district / another state), plus "Unclassified" for ones not
+    yet resolved -- backs the Organization Overview's location dimension.
+    Empty dict if the factory coordinates aren't configured."""
     if factory_lat is None or factory_lon is None:
         return {}
-    counts = {"Factory": 0, "Field": 0, "Unclassified": 0}
+    if geo_budget is None:
+        geo_budget = [DEFAULT_GEO_LOOKUP_BUDGET]
+    counts = {}
     for u in uploads:
         if u.status != "completed":
             continue
-        loc = location_for_upload(u, factory_lat, factory_lon, radius_km)
-        counts[loc or "Unclassified"] += 1
+        loc = location_for_upload(u, factory_lat, factory_lon, radius_km, geo_budget) or "Unclassified"
+        counts[loc] = counts.get(loc, 0) + 1
     return counts
 
 
@@ -621,6 +650,18 @@ def uploads_for_drone(uploads, drone_id):
     if not drone_id:
         return uploads
     return [u for u in uploads if u.drone_id == drone_id]
+
+
+def uploads_for_drone_model(uploads, drone_model):
+    """Scopes an already-fetched upload list to one drone model/type
+    (Tavas, L15, DOPO, ...) across every department, drone and customer --
+    distinct from uploads_for_drone() above, which scopes to a single
+    physical unit by MSN. Reads the drone's current model when it has one
+    (Upload.drone_model is just whatever was typed at upload time, which
+    can drift from the drone's actual record)."""
+    if not drone_model:
+        return uploads
+    return [u for u in uploads if (u.drone.model if u.drone else u.drone_model) == drone_model]
 
 
 def multilog_aggregate(uploads):

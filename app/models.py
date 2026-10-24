@@ -256,3 +256,28 @@ class Warranty(db.Model):
 
     def __repr__(self):
         return f"<Warranty {self.customer_name}/{self.msn}>"
+
+
+class GeoCache(db.Model):
+    """Caches one reverse-geocoded result (a takeoff point, rounded to
+    ~1.1km, -> Indian state + district/county) -- see app/geo.py. Exists
+    purely to avoid re-querying OpenStreetMap's Nominatim (free, but
+    rate-limited to about 1 request/second) for the same real-world site's
+    flights over and over; once a point is resolved here it's permanent,
+    so the Organization Overview's Location breakdown gets faster over
+    time as more real sites get cached rather than re-geocoding on every
+    page load."""
+    __tablename__ = "geo_cache"
+    __table_args__ = (
+        db.UniqueConstraint("lat_r", "lon_r", name="uq_geocache_point"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    lat_r = db.Column(db.Float, nullable=False)
+    lon_r = db.Column(db.Float, nullable=False)
+    state = db.Column(db.String(80), nullable=True)
+    district = db.Column(db.String(80), nullable=True)
+    resolved_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<GeoCache {self.lat_r},{self.lon_r} -> {self.district}, {self.state}>"

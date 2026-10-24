@@ -31,7 +31,7 @@ from app.warranty import status_for_drone as warranty_status_for_drone
 
 dept_bp = Blueprint("dept", __name__)
 
-DRONE_MODEL_CHOICES = ["DOPO", "Tavas", "SWAT", "L15", "NS01", "Nimble"]
+DRONE_MODEL_CHOICES = ["DOPO", "Tavas", "SWAT", "L15", "NS01", "Nimble", "Customized"]
 
 
 def resolve_department():
