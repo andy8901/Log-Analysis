@@ -332,7 +332,8 @@
                 <a href="{{ url_for('admin.users') }}" class="{{ 'active' if request.endpoint == 'admin.users' }}">{{ icon('users') }}<span class="nav-label">Users</span></a>
                 <a href="{{ url_for('admin.export_raw_data') }}">{{ icon('export') }}<span class="nav-label">Multilog Analysis</span></a>
                 <a href="{{ url_for('admin.import_raw_data') }}" class="{{ 'active' if request.endpoint == 'admin.import_raw_data' }}">{{ icon('upload') }}<span class="nav-label">Import Historical Data</span></a>
-                <a href="{{ url_for('admin.batch_upload') }}" class="{{ 'active' if request.endpoint == 'admin.batch_upload' }}">{{ icon('upload') }}<span class="nav-label">Batch Upload (Folder)</span></a>
+                <a href="{{ url_for('admin.batch_upload') }}" class="{{ 'active' if request.endpoint in ('admin.batch_upload', 'admin.batch_upload_file') }}">{{ icon('upload') }}<span class="nav-label">Batch Upload (Folder)</span></a>
+                <a href="{{ url_for('admin.import_warranty') }}" class="{{ 'active' if request.endpoint == 'admin.import_warranty' }}">{{ icon('upload') }}<span class="nav-label">Import Warranty Data</span></a>
                 <a href="{{ url_for('admin.audit') }}" class="{{ 'active' if request.endpoint == 'admin.audit' }}">{{ icon('audit') }}<span class="nav-label">Audit Log</span></a>
             {% else %}
                 <a href="{{ url_for('dept.dashboard') }}" class="{{ 'active' if request.endpoint == 'dept.dashboard' }}">{{ icon('overview') }}<span class="nav-label">Dashboard</span></a>

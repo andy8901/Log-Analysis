@@ -5,17 +5,46 @@
     <h1 style="text-align:center;">Organization-Wide Overview</h1>
 
     <form method="GET" style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+        <label for="deptFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Department:</label>
+        <select name="filter_department_id" id="deptFilterSelect" onchange="this.form.submit()" style="max-width:220px;">
+            <option value="">All departments</option>
+            {% for d in departments %}
+            <option value="{{ d.id }}" {{ 'selected' if selected_department and selected_department.id == d.id }}>{{ d.name }}</option>
+            {% endfor %}
+        </select>
+
         <label for="droneFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Drone:</label>
-        <select name="drone_id" id="droneFilterSelect" onchange="this.form.submit()" style="max-width:320px;">
-            <option value="">All drones (organization-wide)</option>
+        <select name="drone_id" id="droneFilterSelect" onchange="this.form.submit()" style="max-width:280px;">
+            <option value="">All drones</option>
             {% for d in all_drones %}
             <option value="{{ d.id }}" {{ 'selected' if selected_drone and selected_drone.id == d.id }}>{{ d.msn }} &middot; {{ d.model }} &middot; {{ d.department.name }}</option>
             {% endfor %}
         </select>
-        {% if selected_drone %}
+
+        <label for="customerFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Customer:</label>
+        <select name="customer" id="customerFilterSelect" onchange="this.form.submit()" style="max-width:200px;">
+            <option value="">All customers</option>
+            {% for c in all_customers %}
+            <option value="{{ c }}" {{ 'selected' if selected_customer == c }}>{{ c }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="locationFilterSelect" style="font-size:0.88em;color:var(--text-muted);">Location:</label>
+        <select name="location" id="locationFilterSelect" onchange="this.form.submit()" style="max-width:180px;" {{ 'disabled title="Set FACTORY_LAT/FACTORY_LON in .env to enable"' if not factory_configured }}>
+            <option value="">All locations</option>
+            <option value="Factory" {{ 'selected' if selected_location == 'Factory' }}>Factory (internal testing)</option>
+            <option value="Field" {{ 'selected' if selected_location == 'Field' }}>Field (customer sites)</option>
+        </select>
+
+        {% if selected_drone or selected_department or selected_customer or selected_location %}
         <a class="btn secondary" style="padding:5px 12px;font-size:0.85em;" href="{{ url_for('admin.dashboard') }}">Clear</a>
         {% endif %}
     </form>
+    {% if not factory_configured %}
+    <p style="text-align:center;color:var(--text-muted);font-size:0.82em;margin:-10px 0 14px;">
+        Location filtering needs the factory's coordinates set as FACTORY_LAT/FACTORY_LON in .env (optionally FACTORY_RADIUS_KM, default 5km).
+    </p>
+    {% endif %}
 
     <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:24px;font-size:0.85em;color:var(--text-muted);">
         <span style="display:inline-flex;align-items:center;gap:6px;">
@@ -60,9 +89,14 @@
         <div class="metric-card"><h4>Logs Analyzed Today</h4><h2>{{ totals.logs_today }}</h2></div>
         <div class="metric-card" style="{{ 'background:#7f1d1d;' if totals.crashes_total }}"><h4>Crashes Till Today</h4><h2>{{ totals.crashes_total }}</h2>{% if totals.crashes_today %}<span class="metric-trend down">{{ totals.crashes_today }} today</span>{% endif %}</div>
     </div>
-    {% if selected_drone %}
+    {% if selected_drone or selected_department or selected_customer or selected_location %}
     <p style="text-align:center;color:var(--text-muted);font-size:0.9em;margin-top:-10px;">
-        Showing analytics for <strong>{{ selected_drone.msn }} &middot; {{ selected_drone.model }}</strong> ({{ selected_drone.department.name }}) only &mdash; totals above stay organization-wide.
+        Showing analytics for
+        {%- if selected_department %} <strong>{{ selected_department.name }}</strong>{% endif %}
+        {%- if selected_drone %} <strong>{{ selected_drone.msn }} &middot; {{ selected_drone.model }}</strong>{% endif %}
+        {%- if selected_customer %} customer <strong>{{ selected_customer }}</strong>{% endif %}
+        {%- if selected_location %} <strong>{{ 'Factory' if selected_location == 'Factory' else 'Field' }}</strong> flights{% endif %}
+        only &mdash; totals above stay organization-wide.
     </p>
     {% endif %}
 
@@ -73,8 +107,7 @@
     <h2>Flight Investigator Insights</h2>
     <p style="color:var(--text-muted);font-size:0.85em;margin-top:-8px;">
         From the per-flight investigator (.bin logs only) &mdash; verdicts, failsafe timing, and issue counts it has
-        already computed{% if selected_drone %} for {{ selected_drone.msn }}{% endif %}. Flights it hasn't analyzed yet
-        aren't counted here.
+        already computed for the current selection. Flights it hasn't analyzed yet aren't counted here.
     </p>
     <div class="summary-grid">
         <div class="metric-card"><h4>Avg Flight Time</h4><h2>{{ inv_stats.avg_airtime_min if inv_stats.avg_airtime_min is not none else '—' }}<small> min</small></h2></div>
@@ -110,27 +143,43 @@
     {% endif %}
 
     <div class="viz-root">
-        <div class="chart-box" style="max-width:420px;margin:0 auto 28px;">
-            <h4>Issue Breakdown</h4>
-            <canvas id="issueBreakdownChart"></canvas>
+        <div class="analytics-grid viz-row-3">
+            <div class="chart-box">
+                <h4>Issue Breakdown</h4>
+                <canvas id="issueBreakdownChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <h4>By Customer</h4>
+                <canvas id="customerChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <h4>By Location</h4>
+                <canvas id="locationChart"></canvas>
+            </div>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script>
     (function(){
-        const data = {{ issue_breakdown|tojson }};
-        const el = document.getElementById('issueBreakdownChart');
-        const labels = Object.keys(data), values = Object.values(data);
-        const colors = { 'Thrust Loss': '#eb6834', 'Motor': '#e34948', 'GPS': '#2a78d6', 'EKF': '#6250d6', 'Battery Failsafe': '#eda100', 'GCS/RC Failsafe': '#e87ba4', 'Crash': '#7f1d1d' };
-        if(el && typeof Chart !== 'undefined' && values.some(v => v > 0)){
-            new Chart(el, {
-                type: 'doughnut',
-                data: { labels, datasets: [{ data: values, backgroundColor: labels.map(l => colors[l] || '#898781'), borderWidth: 0 }] },
-                options: { responsive: true, animation: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } },
-            });
-        } else if(el){
-            el.parentElement.insertAdjacentHTML('beforeend', '<div class="empty-note">No investigator-tagged issues in this view yet.</div>');
+        function donut(elId, data, colorMap, emptyText){
+            const el = document.getElementById(elId);
+            const labels = Object.keys(data), values = Object.values(data);
+            if(el && typeof Chart !== 'undefined' && values.some(v => v > 0)){
+                new Chart(el, {
+                    type: 'doughnut',
+                    data: { labels, datasets: [{ data: values, backgroundColor: labels.map((l, i) => (colorMap && colorMap[l]) || ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#6250d6','#7f1d1d'][i % 7]), borderWidth: 0 }] },
+                    options: { responsive: true, animation: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } },
+                });
+            } else if(el){
+                el.parentElement.insertAdjacentHTML('beforeend', `<div class="empty-note">${emptyText}</div>`);
+            }
         }
+        donut('issueBreakdownChart', {{ issue_breakdown|tojson }},
+            { 'Thrust Loss': '#eb6834', 'Motor': '#e34948', 'GPS': '#2a78d6', 'EKF': '#6250d6', 'Battery Failsafe': '#eda100', 'GCS/RC Failsafe': '#e87ba4', 'Crash': '#7f1d1d' },
+            'No investigator-tagged issues in this view yet.');
+        donut('customerChart', {{ customer_chart|tojson }}, null, 'No flights in this view yet.');
+        donut('locationChart', {{ location_chart|tojson }}, { 'Factory': '#1baf7a', 'Field': '#2a78d6', 'Unclassified': '#898781' },
+            {{ 'Set FACTORY_LAT/FACTORY_LON in .env to enable location breakdown.'|tojson if not factory_configured else 'No GPS-tagged flights in this view yet.'|tojson }});
     })();
     </script>
 

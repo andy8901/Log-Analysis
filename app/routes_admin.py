@@ -5,21 +5,22 @@ import tempfile
 from datetime import datetime, timezone
 
 import pandas as pd
-from flask import Blueprint, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 
 from app import db
 from app.decorators import admin_required
 from app.drive_sync import diagnostics as drive_sync_diagnostics
 from app.drive_sync import test_write as drive_sync_test_write
-from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, slugify
-from app.routes_dept import DRONE_MODEL_CHOICES, process_and_save_log
+from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User, Warranty, slugify
+from app.routes_dept import DRONE_MODEL_CHOICES, known_customers, process_and_save_log
 from app.stats import (
-    active_drone_trend, conclusion_breakdown, drone_aggregate, flight_summary_aggregate,
-    daily_flight_trend, investigation_aggregate, investigation_category_breakdown,
-    issue_severity_breakdown, multilog_aggregate, person_aggregate,
-    recent_anomalies, today_start, todays_highlight, top_drones_from_uploads, trend_pct,
-    period_window_counts, uploads_for_drone, ytd_start,
+    active_drone_trend, conclusion_breakdown, customer_breakdown, drone_aggregate,
+    flight_summary_aggregate, daily_flight_trend, investigation_aggregate,
+    investigation_category_breakdown, issue_severity_breakdown, location_breakdown,
+    multilog_aggregate, person_aggregate, recent_anomalies, today_start, todays_highlight,
+    top_drones_from_uploads, trend_pct, period_window_counts, uploads_for_customer,
+    uploads_for_drone, uploads_for_location, ytd_start,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -47,13 +48,33 @@ def dashboard():
 
     selected_drone_id = request.args.get("drone_id", type=int)
     selected_drone = next((d for d in all_drones_list if d.id == selected_drone_id), None) if selected_drone_id else None
+    selected_department_id = request.args.get("filter_department_id", type=int)
+    selected_department = next((d for d in departments if d.id == selected_department_id), None) if selected_department_id else None
+    selected_customer = request.args.get("customer") or None
+    selected_location = request.args.get("location") or None
+
+    factory_lat = current_app.config.get("FACTORY_LAT")
+    factory_lon = current_app.config.get("FACTORY_LON")
+    factory_radius_km = current_app.config.get("FACTORY_RADIUS_KM")
+
     # Everything below the top totals row (the "interactive analytics"
     # panel: trend charts, donuts, top drones, anomalies, averages) is
     # computed from this scoped list -- the org-wide totals row above it
     # intentionally stays unscoped, since "how many drones/departments
-    # exist" shouldn't change just because one drone is selected.
-    scoped_completed_uploads = uploads_for_drone(all_completed_uploads, selected_drone_id)
-    scoped_uploads = uploads_for_drone(all_uploads, selected_drone_id)
+    # exist" shouldn't change just because one dimension is filtered.
+    # The four dimensions (drone, department, customer, location) compose:
+    # each is just a filter over whatever the previous one already
+    # narrowed down to.
+    def _scope(uploads):
+        uploads = uploads_for_drone(uploads, selected_drone_id)
+        if selected_department_id:
+            uploads = [u for u in uploads if u.department_id == selected_department_id]
+        uploads = uploads_for_customer(uploads, selected_customer)
+        uploads = uploads_for_location(uploads, selected_location, factory_lat, factory_lon, factory_radius_km)
+        return uploads
+
+    scoped_completed_uploads = _scope(all_completed_uploads)
+    scoped_uploads = _scope(all_uploads)
 
     uploads_by_dept = {}
     drones_by_dept = {}
@@ -112,10 +133,13 @@ def dashboard():
     conclusion_counts = conclusion_breakdown(scoped_completed_uploads)
     today_highlight = todays_highlight(all_completed_uploads)
 
+    any_filter_active = bool(selected_drone_id or selected_department_id or selected_customer or selected_location)
     dept_chart = [
         {"name": row["department"].name, "flights": row["completed"], "anomalies": row["critical"] + row["warning"]}
         for row in rows
-    ] if not selected_drone_id else None
+    ] if not any_filter_active else None
+
+    all_customers = sorted({(d.customer_name or "Unassigned") for d in all_drones_list})
 
     return render_template(
         "admin/dashboard.html", rows=rows, totals=totals, trends=trends,
@@ -125,6 +149,12 @@ def dashboard():
         conclusion_counts=conclusion_counts, today_highlight=today_highlight,
         dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
         all_drones=all_drones_list, selected_drone=selected_drone,
+        departments=departments, selected_department=selected_department,
+        all_customers=all_customers, selected_customer=selected_customer,
+        selected_location=selected_location,
+        factory_configured=bool(factory_lat is not None and factory_lon is not None),
+        customer_chart=customer_breakdown(scoped_completed_uploads),
+        location_chart=location_breakdown(scoped_completed_uploads, factory_lat, factory_lon, factory_radius_km),
     )
 
 
@@ -560,74 +590,287 @@ def import_raw_data():
     return redirect(url_for("admin.import_raw_data"))
 
 
-@admin_bp.route("/batch-upload", methods=["GET", "POST"])
+@admin_bp.route("/batch-upload")
 def batch_upload():
-    """Lets an admin run a whole folder of raw logs for one drone through
-    the same processing pipeline a department's own Upload Log page uses
+    """Lets an admin run a whole folder of raw logs through the same
+    processing pipeline a department's own Upload Log page uses
     (process_and_save_log() in routes_dept.py -- analyzer.py,
-    investigator.py and multilog_analyzer.py, all untouched) in one go,
-    instead of one-at-a-time per department. Each file becomes its own
-    Upload + AnalysisResult, exactly like a real department upload, so it
-    shows up in every dashboard aggregate the same way; this just saves the
-    admin from repeating the single-file form once per log in the folder.
+    investigator.py and multilog_analyzer.py, all untouched), instead of
+    one-at-a-time per department. Each file becomes its own Upload +
+    AnalysisResult, exactly like a real department upload, so it shows up
+    in every dashboard aggregate the same way.
 
-    The browser's folder picker (webkitdirectory) still submits every file
-    inside as a flat multi-file list, which is all this needs -- the whole
-    batch is treated as logs for one department + one drone, since that's
-    how a folder of raw logs off an aircraft's SD card is normally
-    organized."""
+    The page itself (batch_upload.html) drives this with JavaScript: the
+    browser's folder picker (webkitdirectory) submits every file inside as
+    a flat multi-file list, and the page POSTs them one at a time to
+    batch_upload_file() below, updating a live per-file status table and
+    an overall % complete as each one finishes -- a single synchronous
+    all-files-at-once POST would leave the browser showing nothing but a
+    spinner for however long the whole folder takes."""
     departments = Department.query.order_by(Department.name).all()
+    return render_template(
+        "admin/batch_upload.html", departments=departments, model_choices=DRONE_MODEL_CHOICES,
+        known_customers=known_customers(),
+    )
 
-    if request.method == "GET":
-        return render_template(
-            "admin/batch_upload.html", departments=departments, model_choices=DRONE_MODEL_CHOICES,
-        )
 
+@admin_bp.route("/batch-upload/file", methods=["POST"])
+def batch_upload_file():
+    """Processes exactly one file from the batch-upload page's live
+    uploader -- returns JSON instead of a redirect so the page can show
+    per-file progress instead of blocking on the whole folder. Reuses
+    process_and_save_log(), the exact same pipeline a real department
+    upload runs.
+
+    MSN is resolved per file, not required on the form: an organization's
+    own filename convention (MSN_<number>_...) is tried first (the same
+    fallback already used by Import Historical Data), falling back to
+    whatever MSN the admin typed on the form (useful when every file in
+    the folder really is the same one drone). A file that resolves to
+    neither is reported back as skipped, not a hard failure for the whole
+    batch."""
     department_id = request.form.get("department_id", type=int)
-    department = next((d for d in departments if d.id == department_id), None)
+    department = Department.query.get(department_id) if department_id else None
     drone_model = request.form.get("drone", "").strip()
-    msn = request.form.get("msn", "").strip()
+    manual_msn = request.form.get("msn", "").strip()
     flight_date = request.form.get("date", "").strip()
     reported_by = request.form.get("reported_by", "").strip() or current_user.full_name
+    customer_name = request.form.get("customer", "").strip()
+
+    file = request.files.get("log_file")
+    filename = file.filename if file and file.filename else "(no file)"
 
     if department is None:
-        flash("Select a department", "error")
-        return redirect(url_for("admin.batch_upload"))
-    if not msn:
-        flash("MSN is required so these logs can be attached to a drone record", "error")
-        return redirect(url_for("admin.batch_upload"))
+        return jsonify(ok=False, filename=filename, error="Invalid department")
 
-    files = [f for f in request.files.getlist("log_files") if f and f.filename]
-    if not files:
-        flash("No files selected -- pick a folder of .bin/.log/.tlog files", "error")
-        return redirect(url_for("admin.batch_upload"))
+    resolved_msn = _extract_msn_from_filename(filename) or manual_msn
+    if not resolved_msn:
+        return jsonify(
+            ok=False, filename=filename,
+            error="No MSN found in filename (MSN_<number>), and none entered on the form",
+        )
 
-    completed = 0
-    failed = []
-    for f in files:
-        try:
-            upload_row = process_and_save_log(f, department, drone_model, msn, flight_date, reported_by, current_user)
-        except ValueError as exc:
-            failed.append(f"{f.filename}: {exc}")
-            continue
-        if upload_row.status == "failed":
-            failed.append(f"{f.filename}: {upload_row.error_message}")
-        else:
-            completed += 1
+    try:
+        upload_row = process_and_save_log(
+            file, department, drone_model, resolved_msn, flight_date, reported_by, current_user,
+            customer_name=customer_name,
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, filename=filename, msn=resolved_msn, error=str(exc))
 
-    AuditLog.record(
-        current_user, "batch_upload",
-        f"department={department.name} msn={msn} {completed} completed, {len(failed)} failed",
-    )
     db.session.commit()
 
-    if completed:
-        flash(f"Processed {completed} log(s) for {msn}.", "success")
-    if failed:
-        preview = "; ".join(failed[:10]) + (f" (+{len(failed) - 10} more)" if len(failed) > 10 else "")
-        flash(f"{len(failed)} file(s) failed: {preview}", "error")
+    if upload_row.status == "failed":
+        return jsonify(ok=False, filename=filename, msn=resolved_msn, error=upload_row.error_message)
 
-    return redirect(url_for("admin.batch_upload"))
+    AuditLog.record(current_user, "batch_upload", f"department={department.name} msn={resolved_msn} upload={upload_row.id}")
+    db.session.commit()
+
+    return jsonify(
+        ok=True, filename=filename, msn=resolved_msn, upload_id=upload_row.id,
+        report_status=upload_row.analysis.report_status if upload_row.analysis else None,
+        archived_name=os.path.basename(upload_row.archived_path) if upload_row.archived_path else None,
+        view_url=url_for("dept.view_report", upload_id=upload_row.id),
+    )
+
+
+_WARRANTY_COLUMN_ALIASES = {
+    "customer": ("Customer Name", "Customer"),
+    "product": ("Product Name", "Product", "Model"),
+    "msn": ("MSN No", "MSN", "MSN Number", "Serial Number"),
+    "purchase_date": ("Purchase Date",),
+    "warranty_months": ("Warranty (Months)", "Warranty Months", "Warranty"),
+}
+
+
+def _find_warranty_column(columns, field):
+    lower_map = {str(c).strip().lower(): c for c in columns}
+    for alias in _WARRANTY_COLUMN_ALIASES[field]:
+        if alias.lower() in lower_map:
+            return lower_map[alias.lower()]
+    return None
+
+
+def _import_warranty_dataframe(df):
+    """Upserts every row of an already-parsed warranty tracker DataFrame
+    into the Warranty table -- the common path behind both the file-upload
+    and Google Sheet sync forms below. Returns (imported, updated, skipped
+    reasons) rather than touching flash()/redirect() itself, so each
+    caller can report the result in its own way."""
+    columns = list(df.columns)
+    customer_col = _find_warranty_column(columns, "customer")
+    product_col = _find_warranty_column(columns, "product")
+    msn_col = _find_warranty_column(columns, "msn")
+    purchase_col = _find_warranty_column(columns, "purchase_date")
+    months_col = _find_warranty_column(columns, "warranty_months")
+
+    if customer_col is None or msn_col is None:
+        raise ValueError(
+            "Need at least a Customer Name column and an MSN No column "
+            "(case-insensitive; also accepts \"Customer\"/\"MSN\")."
+        )
+
+    imported = updated = 0
+    skipped = []
+
+    for i, row in df.iterrows():
+        row = row.to_dict()
+        customer = _import_text(row, customer_col)
+        msn = _import_text(row, msn_col)
+        if not customer or not msn:
+            skipped.append(f"row {i + 2}: missing customer and/or MSN")
+            continue
+
+        purchase_date = pd.to_datetime(row.get(purchase_col), errors="coerce") if purchase_col else None
+        purchase_date = purchase_date.date() if purchase_date is not None and not pd.isna(purchase_date) else None
+        months = _import_num(row.get(months_col)) if months_col else None
+
+        existing = Warranty.query.filter_by(msn=msn, customer_name=customer).first()
+        if existing is None:
+            existing = Warranty(msn=msn, customer_name=customer)
+            db.session.add(existing)
+            imported += 1
+        else:
+            updated += 1
+
+        existing.product_name = _import_text(row, product_col) if product_col else existing.product_name
+        if purchase_date is not None:
+            existing.purchase_date = purchase_date
+        if months is not None:
+            existing.warranty_months = int(months)
+
+    return imported, updated, skipped
+
+
+def _flash_warranty_import_result(imported, updated, skipped):
+    if imported or updated:
+        flash(f"Imported {imported} new warranty record(s), updated {updated} existing.", "success")
+    if skipped:
+        preview = "; ".join(skipped[:10]) + (f" (+{len(skipped) - 10} more)" if len(skipped) > 10 else "")
+        flash(f"Skipped {len(skipped)} row(s): {preview}", "error")
+    if not imported and not updated and not skipped:
+        flash("No rows to import.", "error")
+
+
+@admin_bp.route("/import-warranty", methods=["GET", "POST"])
+def import_warranty():
+    """Bulk-loads the external warranty tracker spreadsheet into the
+    Warranty table (see models.Warranty / app/warranty.py) -- one row per
+    (customer, MSN), used to show live warranty status on a flight's
+    report page. Only Customer Name/Product Name/MSN No/Purchase Date/
+    Warranty (Months) are read; any Expiry/Days Left/Status/Drone Age
+    columns in the sheet are ignored and recomputed live instead, since
+    those go stale the moment they're calculated relative to "today".
+
+    Upserts by (msn, customer_name) -- re-importing an updated tracker
+    (corrected purchase date, renewed warranty, ...) just overwrites the
+    matching row instead of creating a duplicate. See import_warranty_sheet()
+    below for syncing straight from a shared Google Sheet instead of a
+    manually-exported file."""
+    if request.method == "GET":
+        return render_template("admin/import_warranty.html", default_sheet_url=DEFAULT_WARRANTY_SHEET_URL)
+
+    file = request.files.get("data_file")
+    if not file or not file.filename:
+        flash("No file selected", "error")
+        return redirect(url_for("admin.import_warranty"))
+
+    try:
+        df = pd.read_excel(file, engine="openpyxl")
+    except Exception as exc:
+        flash(f"Could not read that file as an Excel sheet: {exc}", "error")
+        return redirect(url_for("admin.import_warranty"))
+
+    try:
+        imported, updated, skipped = _import_warranty_dataframe(df)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin.import_warranty"))
+
+    AuditLog.record(current_user, "import_warranty", f"file: {imported} new, {updated} updated, {len(skipped)} skipped")
+    db.session.commit()
+    _flash_warranty_import_result(imported, updated, skipped)
+    return redirect(url_for("admin.import_warranty"))
+
+
+# The link shared for this org's live warranty tracker -- pre-fills the
+# "Sync from Google Sheet" field on the Import Warranty Data page so an
+# admin doesn't have to paste it in every time; still overridable there
+# for a different sheet.
+DEFAULT_WARRANTY_SHEET_URL = "https://docs.google.com/spreadsheets/d/1cDK_aAGt52zYKHy5MW_2IF5ySX-p24PzfXhHlK1rgSk/edit?gid=1581997623#gid=1581997623"
+
+_SHEET_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
+_SHEET_GID_RE = re.compile(r"[#&?]gid=(\d+)")
+
+
+def _sheet_csv_url(share_url):
+    """A normal Google Sheets share/edit URL -> the CSV export URL for the
+    one tab it points at (its gid, defaulting to the first tab, 0, if the
+    URL doesn't name one) -- requires the sheet be shared as "Anyone with
+    the link can view" (or published to the web); there's no OAuth wired
+    up here for a private sheet."""
+    id_match = _SHEET_ID_RE.search(share_url)
+    if not id_match:
+        raise ValueError("Doesn't look like a Google Sheets URL (expected .../spreadsheets/d/<id>/...)")
+    gid_match = _SHEET_GID_RE.search(share_url)
+    gid = gid_match.group(1) if gid_match else "0"
+    return f"https://docs.google.com/spreadsheets/d/{id_match.group(1)}/export?format=csv&gid={gid}"
+
+
+def _fetch_sheet_csv(share_url):
+    import urllib.error
+    import urllib.request
+
+    csv_url = _sheet_csv_url(share_url)
+    req = urllib.request.Request(csv_url, headers={"User-Agent": "Neosky-WarrantySync/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ValueError(
+                "Google Sheets refused the request (not shared) -- set sharing to "
+                "\"Anyone with the link can view\", or use the file upload instead."
+            ) from exc
+        raise ValueError(f"Google Sheets returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Couldn't reach Google Sheets from this server: {exc.reason}") from exc
+
+    text = raw.decode("utf-8-sig", errors="replace")
+    if "<html" in text[:200].lower():
+        raise ValueError(
+            "Got an HTML page instead of CSV data -- the sheet probably isn't shared as "
+            "\"Anyone with the link can view\". Share it that way, or use the file upload instead."
+        )
+    return text
+
+
+@admin_bp.route("/import-warranty/sync-sheet", methods=["POST"])
+def import_warranty_sheet():
+    """Same upsert as import_warranty() above, but pulls the data straight
+    from a shared Google Sheet instead of a manually-exported/uploaded
+    file -- lets the org keep editing its live warranty tracker in Sheets
+    and just re-sync here when it changes, instead of re-exporting and
+    re-uploading an Excel file every time."""
+    import io
+
+    sheet_url = request.form.get("sheet_url", "").strip() or DEFAULT_WARRANTY_SHEET_URL
+
+    try:
+        csv_text = _fetch_sheet_csv(sheet_url)
+        df = pd.read_csv(io.StringIO(csv_text))
+        imported, updated, skipped = _import_warranty_dataframe(df)
+    except ValueError as exc:
+        flash(f"Sheet sync failed: {exc}", "error")
+        return redirect(url_for("admin.import_warranty"))
+    except Exception as exc:
+        flash(f"Sheet sync failed: could not parse the sheet as CSV ({exc})", "error")
+        return redirect(url_for("admin.import_warranty"))
+
+    AuditLog.record(current_user, "import_warranty", f"sheet sync: {imported} new, {updated} updated, {len(skipped)} skipped")
+    db.session.commit()
+    _flash_warranty_import_result(imported, updated, skipped)
+    return redirect(url_for("admin.import_warranty"))
 
 
 # ---- Departments -----------------------------------------------------

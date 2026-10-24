@@ -1,21 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Batch Upload (Folder){% endblock %}
 {% block content %}
-<div class="card" style="max-width:720px;margin:0 auto;">
+<style>
+    .bu-progress-wrap{ display:none; margin:22px 0 10px; }
+    .bu-progress-track{ height:14px; border-radius:999px; background:var(--table-border); overflow:hidden; }
+    .bu-progress-bar{ height:100%; width:0%; background:var(--accent); transition:width 0.2s ease; border-radius:999px; }
+    .bu-progress-label{ display:flex; justify-content:space-between; font-size:0.85em; color:var(--text-muted); margin-top:6px; }
+    .bu-results{ display:none; margin-top:18px; }
+    .bu-results table{ font-size:0.88em; }
+    .bu-row-pending td{ color:var(--text-muted); }
+    .bu-row-uploading td{ color:var(--accent); }
+    .bu-row-ok .bu-status{ color:var(--good); font-weight:600; }
+    .bu-row-fail .bu-status{ color:var(--danger); font-weight:600; }
+    .bu-summary{ font-weight:600; margin-top:14px; }
+</style>
+
+<div class="card" style="max-width:860px;margin:0 auto;">
     <h1>Batch Upload (Folder)</h1>
     <p style="color:var(--text-body);">
-        Run a whole folder of raw flight logs (.bin/.log/.tlog) for <strong>one drone</strong> through the same
-        diagnostic pipeline as a normal department upload, in one go &mdash; each file becomes its own flight with a
-        full report, 3D replay where supported, and flight-investigator analysis, exactly as if it had been uploaded
-        one at a time.
+        Run a whole folder of raw flight logs (.bin/.log/.tlog) through the same diagnostic pipeline as a normal
+        department upload, in one go &mdash; each file becomes its own flight with a full report, 3D replay where
+        supported, and flight-investigator analysis, exactly as if it had been uploaded one at a time. Files are
+        processed one at a time with live status below, so you can see progress instead of waiting on the whole
+        folder at once.
     </p>
 
-    <form method="POST" enctype="multipart/form-data">
+    <form id="batchForm" enctype="multipart/form-data">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;">
 
             <div class="input-group">
                 <label>Department</label>
-                <select name="department_id" required>
+                <select name="department_id" id="departmentSelect" required>
                     <option value="">— select —</option>
                     {% for d in departments %}
                     <option value="{{ d.id }}">{{ d.name }}</option>
@@ -25,7 +40,7 @@
 
             <div class="input-group">
                 <label>Drone Model</label>
-                <select name="drone">
+                <select name="drone" id="droneModelSelect">
                     {% for m in model_choices %}
                     <option value="{{ m }}">{{ m }}</option>
                     {% endfor %}
@@ -33,38 +48,161 @@
             </div>
 
             <div class="input-group">
-                <label>MSN Number</label>
-                <input type="text" name="msn" required>
+                <label>MSN Number <small style="font-weight:400;color:var(--text-muted);">(optional -- auto-detected per file from a filename like MSN_064_...)</small></label>
+                <input type="text" name="msn" id="msnInput" placeholder="Fallback MSN if a filename has none">
             </div>
 
             <div class="input-group">
-                <label>Flight / Incident Date (optional, applied to every file)</label>
-                <input type="date" name="date">
+                <label>Flight / Incident Date <small style="font-weight:400;color:var(--text-muted);">(optional, applied to every file)</small></label>
+                <input type="date" name="date" id="dateInput">
             </div>
 
             <div class="input-group">
                 <label>Reported By</label>
-                <input type="text" name="reported_by" value="{{ current_user.full_name }}">
+                <input type="text" name="reported_by" id="reportedByInput" value="{{ current_user.full_name }}">
+            </div>
+
+            <div class="input-group">
+                <label>Customer <small style="font-weight:400;color:var(--text-muted);">(optional -- who these drones are deployed with)</small></label>
+                <input type="text" name="customer" id="customerInput" list="customerList" placeholder="e.g. KA Prison, or Neosky for in-house">
+                <datalist id="customerList">
+                    {% for c in known_customers %}
+                    <option value="{{ c }}">
+                    {% endfor %}
+                </datalist>
             </div>
 
             <div class="input-group">
                 <label>Log Folder</label>
-                <input type="file" name="log_files" webkitdirectory directory multiple accept=".bin,.log,.tlog" required>
+                <input type="file" id="logFiles" webkitdirectory directory multiple accept=".bin,.log,.tlog" required>
             </div>
 
         </div>
 
         <br>
         <center>
-            <button class="btn" type="submit">Process Folder</button>
+            <button class="btn" type="submit" id="submitBtn">Process Folder</button>
         </center>
     </form>
 
+    <div class="bu-progress-wrap" id="progressWrap">
+        <div class="bu-progress-track"><div class="bu-progress-bar" id="progressBar"></div></div>
+        <div class="bu-progress-label">
+            <span id="progressLabel">0 / 0 files</span>
+            <span id="progressPct">0%</span>
+        </div>
+    </div>
+
+    <div class="bu-results" id="resultsWrap">
+        <table>
+            <thead>
+                <tr><th>File</th><th>MSN</th><th>Status</th><th>Result</th><th></th></tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+        </table>
+        <div class="bu-summary" id="summaryLine"></div>
+    </div>
+
     <p style="color:var(--text-muted);font-size:0.9em;margin-top:20px;">
-        All files in the selected folder are treated as logs for the same MSN &mdash; this mirrors how a folder of
-        logs pulled off one aircraft's SD card is normally organized. To process logs for several drones, repeat
-        this per drone. Each file still has to pass the usual checks (readable log, valid type); any that fail are
-        listed after submitting, and the rest still complete.
+        A file with no MSN in its name and no fallback MSN entered above is skipped (shown as failed below) rather
+        than guessed. To process logs for several drones with no MSN in their filenames, run this once per drone
+        with its MSN filled in above.
     </p>
 </div>
+
+<script>
+(function(){
+    const form = document.getElementById('batchForm');
+    const fileInput = document.getElementById('logFiles');
+    const submitBtn = document.getElementById('submitBtn');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar = document.getElementById('progressBar');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressPct = document.getElementById('progressPct');
+    const resultsWrap = document.getElementById('resultsWrap');
+    const resultsBody = document.getElementById('resultsBody');
+    const summaryLine = document.getElementById('summaryLine');
+
+    form.addEventListener('submit', async function(e){
+        e.preventDefault();
+        const files = Array.from(fileInput.files || []);
+        if(!files.length){
+            alert('Pick a folder with at least one .bin/.log/.tlog file.');
+            return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Processing…';
+        progressWrap.style.display = 'block';
+        resultsWrap.style.display = 'block';
+        resultsBody.innerHTML = '';
+        progressBar.style.width = '0%';
+
+        const rows = files.map(f => {
+            const tr = document.createElement('tr');
+            tr.className = 'bu-row-pending';
+            tr.innerHTML = `<td>${f.name}</td><td class="bu-msn">—</td><td class="bu-status">Pending</td><td class="bu-result">—</td><td class="bu-link"></td>`;
+            resultsBody.appendChild(tr);
+            return tr;
+        });
+
+        const common = {
+            department_id: document.getElementById('departmentSelect').value,
+            drone: document.getElementById('droneModelSelect').value,
+            msn: document.getElementById('msnInput').value,
+            date: document.getElementById('dateInput').value,
+            reported_by: document.getElementById('reportedByInput').value,
+            customer: document.getElementById('customerInput').value,
+        };
+
+        let completed = 0, ok = 0, failed = 0;
+
+        for(let i = 0; i < files.length; i++){
+            const file = files[i], row = rows[i];
+            row.className = 'bu-row-uploading';
+            row.querySelector('.bu-status').textContent = 'Uploading…';
+
+            const fd = new FormData();
+            Object.entries(common).forEach(([k, v]) => fd.append(k, v));
+            fd.append('log_file', file);
+
+            try {
+                const resp = await fetch('{{ url_for("admin.batch_upload_file") }}', { method: 'POST', body: fd });
+                const data = await resp.json();
+                row.querySelector('.bu-msn').textContent = data.msn || '—';
+                if(data.ok){
+                    ok++;
+                    row.className = 'bu-row-ok';
+                    row.querySelector('.bu-status').textContent = 'Done';
+                    const resultText = data.report_status || '—';
+                    row.querySelector('.bu-result').textContent = data.archived_name ? `${resultText} (saved as ${data.archived_name})` : resultText;
+                    if(data.view_url){
+                        row.querySelector('.bu-link').innerHTML = `<a href="${data.view_url}" target="_blank" rel="noopener">View</a>`;
+                    }
+                } else {
+                    failed++;
+                    row.className = 'bu-row-fail';
+                    row.querySelector('.bu-status').textContent = 'Failed';
+                    row.querySelector('.bu-result').textContent = data.error || 'Unknown error';
+                }
+            } catch (err) {
+                failed++;
+                row.className = 'bu-row-fail';
+                row.querySelector('.bu-status').textContent = 'Failed';
+                row.querySelector('.bu-result').textContent = 'Network/server error: ' + err;
+            }
+
+            completed++;
+            const pct = Math.round((completed / files.length) * 100);
+            progressBar.style.width = pct + '%';
+            progressPct.textContent = pct + '%';
+            progressLabel.textContent = `${completed} / ${files.length} files`;
+        }
+
+        summaryLine.textContent = `Finished: ${ok} completed, ${failed} failed, out of ${files.length} file(s).`;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Process Folder';
+    });
+})();
+</script>
 {% endblock %}

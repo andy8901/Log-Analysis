@@ -81,6 +81,14 @@ class Drone(db.Model):
     notes = db.Column(db.Text, nullable=True)
     registered_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
+    # Who this physical drone is deployed with -- "Neosky" (or left blank)
+    # for an in-house/factory unit, otherwise the external customer's name.
+    # Set from the "Customer" field on the upload form (see routes_dept.
+    # process_and_save_log()); independent of department, since a customer
+    # is who the drone was sold to/deployed with, not which internal
+    # Neosky department happened to upload its logs.
+    customer_name = db.Column(db.String(200), nullable=True)
+
     department = db.relationship("Department", back_populates="drones")
     uploads = db.relationship(
         "Upload", back_populates="drone", order_by="Upload.uploaded_at.desc()"
@@ -217,3 +225,34 @@ class AuditLog(db.Model):
     def record(actor, action, details=""):
         entry = AuditLog(actor_id=actor.id if actor else None, action=action, details=details)
         db.session.add(entry)
+
+
+class Warranty(db.Model):
+    """Bulk-imported from the external warranty tracker spreadsheet (see
+    routes_admin.import_warranty()) -- deliberately its own table, not a
+    column on Drone, because the tracker covers every drone ever sold
+    (including ones with no Upload/Drone record in this app yet, since
+    plenty of customer units never have a log run through here) and has no
+    department of its own (a customer isn't a Neosky department). Keyed on
+    (msn, customer_name) rather than msn alone, since the same MSN number
+    can legitimately recur across different customers in the tracker.
+
+    Expiry/days-left/status/drone-age are deliberately NOT stored columns
+    -- they're relative to "today" and would go stale the moment they
+    were written; app/warranty.py computes them fresh from purchase_date +
+    warranty_months whenever they're displayed."""
+    __tablename__ = "warranties"
+    __table_args__ = (
+        db.UniqueConstraint("msn", "customer_name", name="uq_warranty_msn_customer"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    msn = db.Column(db.String(80), nullable=False, index=True)
+    customer_name = db.Column(db.String(200), nullable=False)
+    product_name = db.Column(db.String(80), nullable=True)
+    purchase_date = db.Column(db.Date, nullable=True)
+    warranty_months = db.Column(db.Integer, nullable=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<Warranty {self.customer_name}/{self.msn}>"

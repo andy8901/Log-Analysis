@@ -36,6 +36,16 @@
             </div>
 
             <div class="input-group">
+                <label>Customer <small style="font-weight:400;color:var(--text-muted);">(optional -- who this drone is deployed with)</small></label>
+                <input type="text" name="customer" list="customerList" placeholder="e.g. KA Prison, or Neosky for in-house">
+                <datalist id="customerList">
+                    {% for c in known_customers %}
+                    <option value="{{ c }}">
+                    {% endfor %}
+                </datalist>
+            </div>
+
+            <div class="input-group">
                 <label>Upload Log (.bin / .log / .tlog)</label>
                 <input type="file" name="log_file" accept=".bin,.log,.tlog" required>
             </div>
