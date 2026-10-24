@@ -74,3 +74,14 @@ class Config:
         _drive_sync_root_before_dotenv and _drive_sync_root_before_dotenv != DRIVE_SYNC_ROOT
     )
     DRIVE_SYNC_ROOT_PRIOR_ENV_VALUE = _drive_sync_root_before_dotenv
+
+    # Optional: the factory/in-house testing site's coordinates, used to
+    # tell "internal testing" flights apart from flights at a customer's
+    # own site on the Organization Overview's location breakdown -- a
+    # flight whose takeoff point (home_lat/home_lon) falls within
+    # FACTORY_RADIUS_KM of this point is classified "Factory", everything
+    # else "Field". Unset (either coordinate blank) disables the location
+    # breakdown entirely rather than guessing a default location.
+    FACTORY_LAT = float(os.environ["FACTORY_LAT"]) if os.environ.get("FACTORY_LAT") else None
+    FACTORY_LON = float(os.environ["FACTORY_LON"]) if os.environ.get("FACTORY_LON") else None
+    FACTORY_RADIUS_KM = float(os.environ.get("FACTORY_RADIUS_KM", "5"))

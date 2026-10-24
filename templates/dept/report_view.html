@@ -68,6 +68,21 @@
         uploaded by {{ upload.user.full_name }} on {{ upload.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
     </h3>
 
+    {% if warranty %}
+    <p style="text-align:center;margin:-6px 0 18px;">
+        <span class="badge" style="background:{{ 'var(--good)' if warranty.status == 'Active' else ('var(--warn)' if warranty.status == 'Expiring Soon' else 'var(--danger)') }};">
+            Warranty: {{ warranty.status }}
+        </span>
+        <span style="color:var(--text-muted);font-size:0.88em;">
+            {{ warranty.customer_name }}{% if warranty.product_name %} &middot; {{ warranty.product_name }}{% endif %}
+            {% if warranty.expiry_date %} &middot; expires {{ warranty.expiry_date.strftime('%Y-%m-%d') }}
+                ({{ warranty.days_left }} day{{ 's' if warranty.days_left != 1 }}{{ ' left' if warranty.days_left >= 0 else ' overdue' }})
+            {% endif %}
+            {% if warranty.drone_age_days is not none %} &middot; drone age {{ warranty.drone_age_days }} day(s){% endif %}
+        </span>
+    </p>
+    {% endif %}
+
     {% if report.investigation %}
     {% include "dept/_investigation.html" %}
     {% endif %}

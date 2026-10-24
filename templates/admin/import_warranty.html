@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Import Warranty Data{% endblock %}
+{% block content %}
+<div class="card" style="max-width:720px;margin:0 auto;">
+    <h1>Import Warranty Data</h1>
+    <p style="color:var(--text-body);">
+        Bulk-loads the warranty tracker spreadsheet so a flight's report page can show live warranty status for its
+        drone. Covers every drone the tracker lists, even ones that have never had a log uploaded through this app
+        yet -- warranty data isn't tied to a department, only to the customer and MSN.
+    </p>
+
+    <h3 style="margin-top:0;">Sync from Google Sheet</h3>
+    <p style="color:var(--text-muted);font-size:0.9em;">
+        Pulls the tracker straight from a live Google Sheet, no export/upload needed. The sheet must be shared as
+        <strong>"Anyone with the link can view"</strong> &mdash; there's no Google sign-in wired up here, so a
+        private sheet will fail with a clear error instead of silently returning nothing.
+    </p>
+    <form method="POST" action="{{ url_for('admin.import_warranty_sheet') }}">
+        <div class="input-group">
+            <label>Google Sheet URL</label>
+            <input type="text" name="sheet_url" value="{{ default_sheet_url }}" style="width:100%;">
+        </div>
+        <button class="btn" type="submit">Sync Now</button>
+    </form>
+
+    <h3 style="margin-top:28px;">Or Upload a File</h3>
+    <form method="POST" enctype="multipart/form-data">
+        <div class="input-group">
+            <label>Warranty Tracker (.xlsx)</label>
+            <input type="file" name="data_file" accept=".xlsx" required>
+        </div>
+        <button class="btn" type="submit">Import</button>
+    </form>
+
+    <h3 style="margin-top:28px;">Columns it reads</h3>
+    <p style="color:var(--text-muted);font-size:0.9em;">
+        Matching is case-insensitive. Any Warranty Expiry / Days Left / Status / Drone Age columns in your sheet are
+        ignored on purpose &mdash; those are recomputed fresh from Purchase Date + Warranty (Months) every time
+        they're shown, so they're never out of date.
+    </p>
+    <table>
+        <thead><tr><th>Field</th><th>Column names it accepts</th><th>Required?</th></tr></thead>
+        <tbody>
+            <tr><td>Customer Name</td><td>Customer Name, Customer</td><td>Yes &mdash; a row without one is skipped</td></tr>
+            <tr><td>MSN No</td><td>MSN No, MSN, MSN Number, Serial Number</td><td>Yes &mdash; a row without one is skipped</td></tr>
+            <tr><td>Product Name</td><td>Product Name, Product, Model</td><td>No</td></tr>
+            <tr><td>Purchase Date</td><td>Purchase Date</td><td>No &mdash; warranty status can't be computed without it</td></tr>
+            <tr><td>Warranty (Months)</td><td>Warranty (Months), Warranty Months, Warranty</td><td>No &mdash; same as above</td></tr>
+        </tbody>
+    </table>
+    <p style="color:var(--text-muted);font-size:0.9em;">
+        Re-importing an updated tracker (corrected date, renewed term, ...) overwrites the matching
+        (Customer, MSN) row rather than creating a duplicate.
+    </p>
+</div>
+{% endblock %}

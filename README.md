@@ -241,6 +241,8 @@ over it regardless.
 | `UPLOAD_TMP` | `./uploads` | Scratch space for files mid-upload |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | Only read once, to bootstrap the first admin account when the DB is empty |
 | `DRIVE_SYNC_ROOT` | unset (Drive sync disabled) | See below |
+| `FACTORY_LAT` / `FACTORY_LON` | unset (location breakdown disabled) | Coordinates of the factory/in-house testing site, for the Organization Overview's Factory-vs-Field location breakdown — a flight's takeoff point within `FACTORY_RADIUS_KM` of this point counts as "Factory" |
+| `FACTORY_RADIUS_KM` | `5` | Radius around `FACTORY_LAT`/`FACTORY_LON` counted as "Factory" |
 
 ## Optional: Google Drive sync (the easy way — no Cloud Console)
 

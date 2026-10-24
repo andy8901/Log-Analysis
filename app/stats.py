@@ -535,6 +535,83 @@ def todays_highlight(uploads):
     return {"crash": crash, "critical": critical}
 
 
+def uploads_for_customer(uploads, customer_name):
+    """Scopes an already-fetched upload list to one customer (by the
+    customer_name recorded on each upload's drone -- see
+    routes_dept.process_and_save_log()). customer_name=='' is treated as
+    "no customer on file", matching uploads whose drone has none set."""
+    if customer_name is None:
+        return uploads
+    if customer_name == "":
+        return [u for u in uploads if not (u.drone and u.drone.customer_name)]
+    return [u for u in uploads if u.drone and u.drone.customer_name == customer_name]
+
+
+def customer_breakdown(uploads):
+    """Counts of uploads per customer -- "Unassigned" for a drone with no
+    customer_name on file yet. Backs the Organization Overview's customer
+    dimension and its selector's option list."""
+    counts = {}
+    for u in uploads:
+        name = (u.drone.customer_name if u.drone else None) or "Unassigned"
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
+
+
+def location_for_upload(upload, factory_lat, factory_lon, radius_km):
+    """"Factory" if this flight's takeoff point is within radius_km of the
+    given factory coordinates, "Field" if it has a takeoff point outside
+    that radius, or None if this flight has no GPS takeoff point to
+    classify by (and so can't be placed in either bucket) or the factory
+    coordinates aren't configured (FACTORY_LAT/FACTORY_LON in .env)."""
+    if factory_lat is None or factory_lon is None:
+        return None
+    if not upload.analysis:
+        return None
+    report = upload.analysis.get_report()
+    summary = (report or {}).get("summary") or {}
+    lat, lon = summary.get("home_lat"), summary.get("home_lon")
+    if lat is None or lon is None:
+        return None
+    return "Factory" if _haversine_km(lat, lon, factory_lat, factory_lon) <= radius_km else "Field"
+
+
+def uploads_for_location(uploads, location, factory_lat, factory_lon, radius_km):
+    """Scopes an already-fetched upload list to one location bucket
+    ("Factory" or "Field") -- see location_for_upload()."""
+    if not location:
+        return uploads
+    return [
+        u for u in uploads
+        if u.status == "completed" and location_for_upload(u, factory_lat, factory_lon, radius_km) == location
+    ]
+
+
+def location_breakdown(uploads, factory_lat, factory_lon, radius_km):
+    """Counts of completed flights by location bucket (Factory/Field),
+    plus "Unclassified" for ones with no GPS takeoff point -- backs the
+    Organization Overview's location dimension. Empty dict if the factory
+    coordinates aren't configured."""
+    if factory_lat is None or factory_lon is None:
+        return {}
+    counts = {"Factory": 0, "Field": 0, "Unclassified": 0}
+    for u in uploads:
+        if u.status != "completed":
+            continue
+        loc = location_for_upload(u, factory_lat, factory_lon, radius_km)
+        counts[loc or "Unclassified"] += 1
+    return counts
+
+
 def uploads_for_drone(uploads, drone_id):
     """Scopes an already-fetched upload list to one drone -- the filter
     behind the org overview's drone selector (item #3): every existing

@@ -27,6 +27,7 @@ from app.stats import (
     period_window_counts, recent_anomalies, top_drones_from_uploads, trend_pct,
 )
 from app.storage import allowed_log_file, archive_upload, remove_with_retry
+from app.warranty import status_for_drone as warranty_status_for_drone
 
 dept_bp = Blueprint("dept", __name__)
 
@@ -143,21 +144,27 @@ def upload():
     department = current_user.department
 
     if request.method == "GET":
-        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES)
+        return render_template(
+            "dept/upload.html", model_choices=DRONE_MODEL_CHOICES, known_customers=known_customers(),
+        )
 
     drone_model = request.form.get("drone", "").strip()
     msn = request.form.get("msn", "").strip()
     flight_date = request.form.get("date", "").strip()
     reported_by = request.form.get("reported_by", "").strip()
+    customer_name = request.form.get("customer", "").strip()
 
     file = request.files.get("log_file")
     try:
         upload_row = process_and_save_log(
             file, department, drone_model, msn, flight_date, reported_by, current_user,
+            customer_name=customer_name,
         )
     except ValueError as exc:
         flash(str(exc), "error")
-        return render_template("dept/upload.html", model_choices=DRONE_MODEL_CHOICES), 400
+        return render_template(
+            "dept/upload.html", model_choices=DRONE_MODEL_CHOICES, known_customers=known_customers(),
+        ), 400
 
     if upload_row.status == "failed":
         flash(f"Processing failed: {upload_row.error_message}", "error")
@@ -166,7 +173,21 @@ def upload():
     return redirect(url_for("dept.view_report", upload_id=upload_row.id))
 
 
-def process_and_save_log(file, department, drone_model, msn, flight_date, reported_by, user):
+def known_customers():
+    """Distinct customer names already on file across every drone -- backs
+    the "Customer" field's suggestion list on the upload forms (see
+    process_and_save_log()'s customer_name handling below)."""
+    rows = (
+        db.session.query(Drone.customer_name)
+        .filter(Drone.customer_name.isnot(None), Drone.customer_name != "")
+        .distinct()
+        .order_by(Drone.customer_name)
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def process_and_save_log(file, department, drone_model, msn, flight_date, reported_by, user, customer_name=None):
     """The single-log processing pipeline -- validate, save to a tmp path,
     resolve/create the drone, run analyzer.py + investigator.py +
     multilog_analyzer.py (all untouched analysis logic, only ever read
@@ -202,9 +223,14 @@ def process_and_save_log(file, department, drone_model, msn, flight_date, report
     drone = Drone.query.filter_by(msn=msn, department_id=department.id).first()
 
     if drone is None:
-        drone = Drone(msn=msn, model=drone_model or "UNKNOWN", department_id=department.id)
+        drone = Drone(msn=msn, model=drone_model or "UNKNOWN", department_id=department.id, customer_name=customer_name or None)
         db.session.add(drone)
         db.session.flush()
+    elif customer_name:
+        # Only ever fills in/corrects it -- a blank Customer field on a
+        # later upload (e.g. someone who doesn't know it) must never wipe
+        # out a value a previous upload already recorded.
+        drone.customer_name = customer_name
 
     upload_row = Upload(
         department_id=department.id,
@@ -377,9 +403,11 @@ def view_report(upload_id):
 
     report = _ensure_investigation(upload_row, upload_row.analysis.get_report())
     track, track_meta = build_track(report)
+    warranty = warranty_status_for_drone(upload_row.drone) if upload_row.drone else None
     return render_template(
         "dept/report_view.html", upload=upload_row, report=report,
         track=track, track_meta=track_meta, conclusion_choices=CONCLUSION_CHOICES,
+        warranty=warranty,
     )
 
 
