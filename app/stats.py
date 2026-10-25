@@ -5,6 +5,7 @@ this only summarizes already-computed per-flight results across many
 flights/drones/people."""
 
 import math
+import statistics
 from datetime import datetime, time, timezone
 
 
@@ -377,21 +378,30 @@ def investigation_aggregate(uploads):
     reflects whatever subset currently has the data, same "-- when
     unavailable" pattern as the rest of this module.
 
-    Two items this dashboard would otherwise want -- a PreArm-issue count
-    and an average cold-start time -- have no source here: investigator.py
-    doesn't surface either (PreArm messages are filtered out of its
-    findings, and it computes no cold-start figure), and per this project's
-    standing rule investigator.py's own detection logic is never extended
-    to manufacture one."""
+    A few items a CEO-level dashboard would otherwise want have no
+    reliable source here, and per this project's standing rule
+    investigator.py's own detection logic is never extended to
+    manufacture one: a PreArm-issue count and average cold-start time
+    (PreArm messages are filtered out of its findings, and it computes no
+    cold-start figure), precise failsafe trigger-to-response latency
+    (would need a structured trigger/response event pair, not just
+    tagged text), and a distinct ESC-error signal (ESC only ever appears
+    as prose inside a motor/thrust finding's explanation, never its own
+    tagged event)."""
     today = today_start()
     scored = 0
     airtimes_min, max_dists, max_alts = [], [], []
     battery_fs_airtimes_min = []
     gcs_fs_dists = []
     rc_fs_dists = []
+    motor_saturation_pcts = []
     thrust_issue = gps_issue = ekf_issue = motor_issue = 0
+    gcs_fs_flights = rc_fs_flights = battery_fs_flights = 0
+    altitude_loss_events = 0
     human_error = system_error = 0
     crashes = crashes_today = 0
+    kind_counts = {}
+    firmware_counts = {}
 
     for u in uploads:
         if u.status != "completed" or not u.analysis:
@@ -411,6 +421,10 @@ def investigation_aggregate(uploads):
             max_dists.append(fig["maxDist"])
         if fig.get("maxAlt") is not None:
             max_alts.append(fig["maxAlt"])
+        if fig.get("motMaxPct") is not None:
+            motor_saturation_pcts.append(fig["motMaxPct"])
+        if fig.get("firmware"):
+            firmware_counts[fig["firmware"]] = firmware_counts.get(fig["firmware"], 0) + 1
 
         text = _investigation_texts(inv)
         if "thrust" in text:
@@ -421,12 +435,20 @@ def investigation_aggregate(uploads):
             gps_issue += 1
         if "ekf" in text or "navigation" in text:
             ekf_issue += 1
-        if "battery failsafe" in text and airtime_min is not None:
-            battery_fs_airtimes_min.append(airtime_min)
-        if "gcs" in text and "failsafe" in text and fig.get("maxDist") is not None:
-            gcs_fs_dists.append(fig["maxDist"])
-        if ("rc link lost" in text or "radio failsafe" in text) and fig.get("maxDist") is not None:
-            rc_fs_dists.append(fig["maxDist"])
+        if "fell" in text or "free fall" in text:
+            altitude_loss_events += 1
+        if "battery failsafe" in text:
+            battery_fs_flights += 1
+            if airtime_min is not None:
+                battery_fs_airtimes_min.append(airtime_min)
+        if "gcs" in text and "failsafe" in text:
+            gcs_fs_flights += 1
+            if fig.get("maxDist") is not None:
+                gcs_fs_dists.append(fig["maxDist"])
+        if "rc link lost" in text or "radio failsafe" in text:
+            rc_fs_flights += 1
+            if fig.get("maxDist") is not None:
+                rc_fs_dists.append(fig["maxDist"])
 
         primary = (inv.get("verdict") or {}).get("primary")
         if primary == "human":
@@ -434,16 +456,24 @@ def investigation_aggregate(uploads):
         elif primary == "system":
             system_error += 1
 
-        if inv.get("kind") == "crash":
+        kind = inv.get("kind") or "unknown"
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        if kind == "crash":
             crashes += 1
             if u.uploaded_at and u.uploaded_at >= today:
                 crashes_today += 1
 
+    def _rate(n):
+        return round(n / scored * 100, 1) if scored else None
+
     return {
         "scored_flights": scored,
         "avg_airtime_min": _avg(airtimes_min),
+        "median_airtime_min": round(statistics.median(airtimes_min), 1) if airtimes_min else None,
         "avg_max_distance_m": _avg(max_dists),
         "avg_max_altitude_m": _avg(max_alts),
+        "avg_motor_saturation_pct": _avg(motor_saturation_pcts),
+        "max_motor_saturation_pct": max(motor_saturation_pcts) if motor_saturation_pcts else None,
         "avg_airtime_at_battery_fs_min": _avg(battery_fs_airtimes_min),
         "avg_distance_at_gcs_fs_m": _avg(gcs_fs_dists),
         "avg_distance_at_rc_fs_m": _avg(rc_fs_dists),
@@ -451,10 +481,23 @@ def investigation_aggregate(uploads):
         "motor_issue_flights": motor_issue,
         "gps_issue_flights": gps_issue,
         "ekf_issue_flights": ekf_issue,
+        "altitude_loss_events": altitude_loss_events,
+        "battery_fs_flights": battery_fs_flights,
+        "gcs_fs_flights": gcs_fs_flights,
+        "rc_fs_flights": rc_fs_flights,
+        "battery_fs_rate_pct": _rate(battery_fs_flights),
+        "gcs_fs_rate_pct": _rate(gcs_fs_flights),
+        "rc_fs_rate_pct": _rate(rc_fs_flights),
+        "gps_issue_rate_pct": _rate(gps_issue),
+        "ekf_issue_rate_pct": _rate(ekf_issue),
+        "thrust_issue_rate_pct": _rate(thrust_issue),
         "human_error_flights": human_error,
         "system_error_flights": system_error,
         "crash_count": crashes,
         "crashes_today": crashes_today,
+        "crash_rate_pct": _rate(crashes),
+        "kind_counts": kind_counts,
+        "firmware_counts": firmware_counts,
     }
 
 
@@ -612,11 +655,17 @@ def location_for_upload(upload, factory_lat, factory_lon, radius_km, geo_budget=
 
 def uploads_for_location(uploads, location, factory_lat, factory_lon, radius_km, geo_budget=None):
     """Scopes an already-fetched upload list to one location bucket --
-    see location_for_upload(). "Karnataka" is a whole-state rollup: it
-    matches a flight in *any* Karnataka district (location_for_upload()
-    itself only ever returns a specific district, e.g. "Karnataka:
-    Bengaluru Urban", never the bare state name), rather than requiring a
-    second, separate filter per district."""
+    see location_for_upload(). Three values are whole-state rollups rather
+    than a single district/state bucket:
+    - "Karnataka": every Karnataka district, EXCLUDING the factory itself
+      (location_for_upload() classifies a factory-radius flight as
+      "Factory", never as a district, even though the factory sits inside
+      Karnataka -- so this rollup matches only flights outside that radius
+      but still in the state).
+    - "Karnataka (Full)": the same districts PLUS the factory -- i.e. every
+      flight anywhere in Karnataka, factory included.
+    - "Karnataka: district unresolved" is matched by "Karnataka" (and
+      "Karnataka (Full)") too, like any other district."""
     if not location:
         return uploads
     if geo_budget is None:
@@ -628,6 +677,8 @@ def uploads_for_location(uploads, location, factory_lat, factory_lon, radius_km,
         loc = location_for_upload(u, factory_lat, factory_lon, radius_km, geo_budget)
         if location == "Karnataka":
             return bool(loc) and loc.startswith("Karnataka:")
+        if location == "Karnataka (Full)":
+            return loc == "Factory" or (bool(loc) and loc.startswith("Karnataka:"))
         return loc == location
 
     return [u for u in uploads if _matches(u)]
@@ -724,3 +775,119 @@ def multilog_aggregate(uploads):
         "thrust_issue_flights": thrust_issue_flights,
         "gps_issue_flights": gps_issue_flights,
     }
+
+
+def reliability_summary(uploads):
+    """Fleet-reliability headline numbers for the CEO dashboard's
+    'Management actions' section: how often a flight ends in a crash or a
+    CRITICAL verdict, scaled two ways (per 100 flights, and per 100 flight
+    hours -- the second normalizes for fleets that fly very different
+    total hours), plus how much of the backlog of flagged flights has
+    actually been closed out with a conclusion.
+
+    Per this project's standing rule, 'crash' here is strictly
+    investigator.py's own kind=='crash' verdict and 'critical' is
+    analyzer.py's own report_status=='CRITICAL' -- both already-computed
+    classifications, never a warning or finding re-counted as a failure.
+    conclusion_breakdown()/Upload.has_conclusion (an explicit human
+    sign-off) is the only thing counted as 'closed', not merely having
+    been analyzed."""
+    scored = 0
+    flight_hours = 0.0
+    crashes = 0
+    criticals = 0
+    flagged = 0  # WARNING or CRITICAL -- the flights that need a decision
+    flagged_closed = 0
+
+    for u in uploads:
+        if u.status != "completed" or not u.analysis:
+            continue
+        scored += 1
+        report = u.analysis.get_report()
+        inv = (report or {}).get("investigation") if report else None
+
+        airtime_s = (inv.get("figures") or {}).get("airtime") if inv else None
+        if airtime_s:
+            flight_hours += airtime_s / 3600.0
+
+        if inv and inv.get("kind") == "crash":
+            crashes += 1
+
+        status = u.analysis.report_status
+        if status == "CRITICAL":
+            criticals += 1
+        if status in ("WARNING", "CRITICAL"):
+            flagged += 1
+            if u.has_conclusion:
+                flagged_closed += 1
+
+    def _per(n, denom):
+        return round(n / denom * 100, 2) if denom else None
+
+    return {
+        "scored_flights": scored,
+        "flight_hours": round(flight_hours, 1),
+        "crash_count": crashes,
+        "critical_count": criticals,
+        "crash_rate_per_100_flights": _per(crashes, scored),
+        "critical_rate_per_100_flights": _per(criticals, scored),
+        "crash_rate_per_100_hours": _per(crashes, flight_hours),
+        "critical_rate_per_100_hours": _per(criticals, flight_hours),
+        "reliability_rate_pct": round(100 - _per(crashes, scored), 2) if scored else None,
+        "flagged_flights": flagged,
+        "flagged_closed": flagged_closed,
+        "issue_closure_rate_pct": _per(flagged_closed, flagged),
+    }
+
+
+def factory_vs_field_comparison(uploads, factory_lat, factory_lon, radius_km, geo_budget=None):
+    """Side-by-side reliability_summary() for 'Factory' (internal/pre-
+    delivery testing) vs. every other flight ('Field', i.e. with a
+    customer) -- the user's explicit 'Customer vs internal testing'
+    priority item. None for either side if the factory coordinates aren't
+    configured (FACTORY_LAT/FACTORY_LON in .env), same as the rest of the
+    location-based functions in this module."""
+    if factory_lat is None or factory_lon is None:
+        return {"factory": None, "field": None}
+    if geo_budget is None:
+        geo_budget = [DEFAULT_GEO_LOOKUP_BUDGET]
+
+    factory_uploads = uploads_for_location(uploads, "Factory", factory_lat, factory_lon, radius_km, geo_budget)
+    factory_ids = {u.id for u in factory_uploads}
+    field_uploads = [u for u in uploads if u.status == "completed" and u.id not in factory_ids]
+
+    return {
+        "factory": reliability_summary(factory_uploads),
+        "field": reliability_summary(field_uploads),
+    }
+
+
+def investigation_queue(uploads, limit=15):
+    """The flights most in need of a human decision right now: completed,
+    analyzed flights with a WARNING or CRITICAL report_status that nobody
+    has closed out with a conclusion yet (Upload.has_conclusion) --
+    backs the 'pending RCA' / investigation-queue list in the
+    'Management actions' section. Most recent first; `limit` bounds how
+    many rows the dashboard actually renders."""
+    pending = []
+    for u in uploads:
+        if u.status != "completed" or not u.analysis or u.has_conclusion:
+            continue
+        status = u.analysis.report_status
+        if status not in ("WARNING", "CRITICAL"):
+            continue
+        report = u.analysis.get_report()
+        inv = (report or {}).get("investigation") if report else None
+        pending.append({
+            "upload_id": u.id,
+            "msn": u.drone.msn if u.drone else u.msn_entered,
+            "department": u.department.name if u.department else None,
+            "customer_name": u.drone.customer_name if u.drone else None,
+            "uploaded_at": u.uploaded_at,
+            "report_status": status,
+            "kind": inv.get("kind") if inv else None,
+            "verdict_label": (inv.get("verdict") or {}).get("label") if inv else None,
+        })
+
+    pending.sort(key=lambda row: row["uploaded_at"] or datetime.min, reverse=True)
+    return pending[:limit]
