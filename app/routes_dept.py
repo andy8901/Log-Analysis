@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -279,10 +280,36 @@ def process_and_save_log(file, department, drone_model, msn, flight_date, report
     AuditLog.record(user, "upload_analyzed", f"upload={upload_row.id} drone={drone.msn}")
     db.session.commit()
 
-    upload_to_drive(archived_path, department.name, drone.msn, os.path.basename(archived_path), kind="Raw Logs")
-    _sync_reports_to_drive(upload_row, report, department, drone)
+    # Plain values captured now, before handing off to a background thread
+    # -- upload_row/department/drone are SQLAlchemy objects bound to this
+    # request's session, and db.session.commit() just expired their
+    # attributes, so touching them from another thread (after this request's
+    # session may already be torn down) is unsafe. Drive sync is already
+    # best-effort (both calls below swallow their own errors), so running
+    # it off the request's critical path -- rather than blocking the
+    # response, and for batch upload every file still waiting behind this
+    # one -- on a slow or unresponsive Drive folder costs nothing.
+    mission = {
+        "drone": upload_row.drone_model,
+        "msn": upload_row.msn_entered,
+        "date": upload_row.flight_date,
+        "reported_by": upload_row.reported_by,
+    }
+    _dispatch_drive_sync(
+        current_app._get_current_object(), archived_path, department.name, drone.msn,
+        upload_row.id, filename, report, mission,
+    )
 
     return upload_row
+
+
+def _dispatch_drive_sync(app, archived_path, department_name, drone_msn, upload_id, original_filename, report, mission):
+    def _run():
+        with app.app_context():
+            upload_to_drive(archived_path, department_name, drone_msn, os.path.basename(archived_path), kind="Raw Logs")
+            _sync_reports_to_drive(report, department_name, drone_msn, upload_id, original_filename, mission)
+
+    threading.Thread(target=_run, daemon=True, name=f"drive-sync-{upload_id}").start()
 
 
 def _attach_investigation(report, log_path, upload_id):
@@ -335,18 +362,14 @@ def _extract_multilog_json(archived_path, upload_id):
         return None
 
 
-def _sync_reports_to_drive(upload_row, report, department, drone):
+def _sync_reports_to_drive(report, department_name, drone_msn, upload_id, original_filename, mission):
     """Generates the Word/Excel reports fresh (just to get a file to hand
     to Drive) and mirrors them into that drone's "Reports" subfolder,
     alongside the raw log's own "Raw Logs" subfolder synced by the caller.
     Best-effort: failures are logged and swallowed inside upload_to_drive()
-    itself."""
-    mission = {
-        "drone": upload_row.drone_model,
-        "msn": upload_row.msn_entered,
-        "date": upload_row.flight_date,
-        "reported_by": upload_row.reported_by,
-    }
+    itself. Takes plain values rather than the Upload/Department/Drone
+    objects themselves -- see _dispatch_drive_sync(), which runs this in a
+    background thread where those ORM objects aren't safe to touch."""
     jobs = [
         ("word", "docx", "Report", lambda p: generate_word_report(report, mission, p)),
         ("xlsx", "xlsx", "Report", lambda p: generate_excel(report, p)),
@@ -359,13 +382,13 @@ def _sync_reports_to_drive(upload_row, report, department, drone):
         try:
             generate(tmp_path)
             upload_to_drive(
-                tmp_path, department.name, drone.msn,
-                f"{upload_row.id}_{os.path.splitext(upload_row.original_filename)[0]}_{suffix}.{ext}",
+                tmp_path, department_name, drone_msn,
+                f"{upload_id}_{os.path.splitext(original_filename)[0]}_{suffix}.{ext}",
             )
         except Exception:
             current_app.logger.warning(
                 "Report generation for Drive sync failed (upload=%s, fmt=%s)",
-                upload_row.id, fmt, exc_info=True,
+                upload_id, fmt, exc_info=True,
             )
         finally:
             try:
