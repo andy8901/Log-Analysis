@@ -89,6 +89,7 @@
         <div class="bu-progress-track"><div class="bu-progress-bar" id="progressBar"></div></div>
         <div class="bu-progress-label">
             <span id="progressLabel">0 / 0 files</span>
+            <span id="progressEta"></span>
             <span id="progressPct">0%</span>
         </div>
     </div>
@@ -118,7 +119,14 @@
     const progressWrap = document.getElementById('progressWrap');
     const progressBar = document.getElementById('progressBar');
     const progressLabel = document.getElementById('progressLabel');
+    const progressEta = document.getElementById('progressEta');
     const progressPct = document.getElementById('progressPct');
+
+    function formatDuration(seconds){
+        seconds = Math.max(0, Math.round(seconds));
+        const m = Math.floor(seconds / 60), s = seconds % 60;
+        return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    }
     const resultsWrap = document.getElementById('resultsWrap');
     const resultsBody = document.getElementById('resultsBody');
     const summaryLine = document.getElementById('summaryLine');
@@ -137,6 +145,8 @@
         resultsWrap.style.display = 'block';
         resultsBody.innerHTML = '';
         progressBar.style.width = '0%';
+        progressEta.textContent = '';
+        const startedAt = Date.now();
 
         const rows = files.map(f => {
             const tr = document.createElement('tr');
@@ -197,6 +207,18 @@
             progressBar.style.width = pct + '%';
             progressPct.textContent = pct + '%';
             progressLabel.textContent = `${completed} / ${files.length} files`;
+
+            // Estimated from this run's own average time-per-file so far --
+            // file size and Drive-sync responsiveness both vary a lot, so a
+            // fixed per-file guess would be wrong; this adapts as the batch
+            // actually runs.
+            const remaining = files.length - completed;
+            if(remaining > 0){
+                const avgPerFile = (Date.now() - startedAt) / completed;
+                progressEta.textContent = `~${formatDuration(avgPerFile * remaining / 1000)} remaining`;
+            } else {
+                progressEta.textContent = `took ${formatDuration((Date.now() - startedAt) / 1000)}`;
+            }
         }
 
         summaryLine.textContent = `Finished: ${ok} completed, ${failed} failed, out of ${files.length} file(s).`;
