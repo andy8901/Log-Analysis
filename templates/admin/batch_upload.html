@@ -166,6 +166,12 @@
         };
 
         let completed = 0, ok = 0, failed = 0;
+        // Only successfully-processed files' durations feed the ETA -- a
+        // file rejected instantly (no MSN, wrong type) takes a fraction of
+        // a second and would otherwise drag a straight running average
+        // down to something wildly optimistic the moment one appears early
+        // in the folder.
+        const okDurations = [];
 
         for(let i = 0; i < files.length; i++){
             const file = files[i], row = rows[i];
@@ -176,11 +182,13 @@
             Object.entries(common).forEach(([k, v]) => fd.append(k, v));
             fd.append('log_file', file);
 
+            const fileStartedAt = Date.now();
             try {
                 const resp = await fetch('{{ url_for("admin.batch_upload_file") }}', { method: 'POST', body: fd });
                 const data = await resp.json();
                 row.querySelector('.bu-msn').textContent = data.msn || '—';
                 if(data.ok){
+                    okDurations.push(Date.now() - fileStartedAt);
                     ok++;
                     row.className = 'bu-row-ok';
                     row.querySelector('.bu-status').textContent = 'Done';
@@ -208,14 +216,19 @@
             progressPct.textContent = pct + '%';
             progressLabel.textContent = `${completed} / ${files.length} files`;
 
-            // Estimated from this run's own average time-per-file so far --
-            // file size and Drive-sync responsiveness both vary a lot, so a
-            // fixed per-file guess would be wrong; this adapts as the batch
+            // Estimated from the average time of this run's own
+            // successfully-processed files so far -- file size and
+            // Drive-sync responsiveness both vary a lot, so a fixed
+            // per-file guess would be wrong; this adapts as the batch
             // actually runs.
             const remaining = files.length - completed;
             if(remaining > 0){
-                const avgPerFile = (Date.now() - startedAt) / completed;
-                progressEta.textContent = `~${formatDuration(avgPerFile * remaining / 1000)} remaining`;
+                if(okDurations.length){
+                    const avgPerFile = okDurations.reduce((a, b) => a + b, 0) / okDurations.length;
+                    progressEta.textContent = `~${formatDuration(avgPerFile * remaining / 1000)} remaining`;
+                } else {
+                    progressEta.textContent = 'estimating…';
+                }
             } else {
                 progressEta.textContent = `took ${formatDuration((Date.now() - startedAt) / 1000)}`;
             }
