@@ -558,7 +558,7 @@ def customer_breakdown(uploads):
     return counts
 
 
-def _haversine_km(lat1, lon1, lat2, lon2):
+def haversine_km(lat1, lon1, lat2, lon2):
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dp = math.radians(lat2 - lat1)
@@ -596,7 +596,7 @@ def location_for_upload(upload, factory_lat, factory_lon, radius_km, geo_budget=
     lat, lon = summary.get("home_lat"), summary.get("home_lon")
     if lat is None or lon is None:
         return None
-    if _haversine_km(lat, lon, factory_lat, factory_lon) <= radius_km:
+    if haversine_km(lat, lon, factory_lat, factory_lon) <= radius_km:
         return "Factory"
 
     if geo_budget is None:

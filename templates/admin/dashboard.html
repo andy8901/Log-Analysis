@@ -63,6 +63,13 @@
     <p style="text-align:center;color:var(--text-muted);font-size:0.82em;margin:-10px 0 14px;">
         Location filtering needs the factory's coordinates set as FACTORY_LAT/FACTORY_LON in .env (optionally FACTORY_RADIUS_KM, default 5km).
     </p>
+    {% else %}
+    <p style="text-align:center;color:var(--text-muted);font-size:0.82em;margin:-10px 0 14px;">
+        New flight locations show as "Unclassified" until resolved &mdash; this page never does that automatically (it would be slow).
+        <form method="POST" action="{{ url_for('admin.resolve_locations') }}" style="display:inline;">
+            <button class="btn secondary" type="submit" style="padding:4px 12px;font-size:0.82em;">Resolve Pending Locations</button>
+        </form>
+    </p>
     {% endif %}
 
     <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:24px;font-size:0.85em;color:var(--text-muted);">

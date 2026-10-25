@@ -109,3 +109,17 @@ def resolve(lat, lon, budget):
     db.session.add(GeoCache(lat_r=rlat, lon_r=rlon, state=state, district=district))
     db.session.commit()
     return state, district
+
+
+def is_cached(lat, lon):
+    """Whether this point already has a GeoCache row -- true even if that
+    lookup came back empty (state/district both None), since that's still
+    a permanent, already-spent answer, not something still waiting for a
+    turn. Used to count genuinely-pending points (never attempted) apart
+    from ones that were tried and simply couldn't be resolved -- resolve()
+    itself can't tell the two apart from its return value alone, since
+    both read as (None, None)."""
+    from app.models import GeoCache
+
+    rlat, rlon = _round(lat), _round(lon)
+    return GeoCache.query.filter_by(lat_r=rlat, lon_r=rlon).first() is not None
