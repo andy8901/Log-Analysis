@@ -16,11 +16,12 @@ from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User
 from app.routes_dept import DRONE_MODEL_CHOICES, known_customers, process_and_save_log
 from app.stats import (
     active_drone_trend, conclusion_breakdown, customer_breakdown, drone_aggregate,
-    flight_summary_aggregate, daily_flight_trend, investigation_aggregate,
+    flight_summary_aggregate, daily_flight_trend, haversine_km, investigation_aggregate,
     investigation_category_breakdown, issue_severity_breakdown, location_breakdown,
-    multilog_aggregate, person_aggregate, recent_anomalies, today_start, todays_highlight,
-    top_drones_from_uploads, trend_pct, period_window_counts, uploads_for_customer,
-    uploads_for_drone, uploads_for_drone_model, uploads_for_location, ytd_start,
+    location_for_upload, multilog_aggregate, person_aggregate, recent_anomalies,
+    today_start, todays_highlight, top_drones_from_uploads, trend_pct,
+    period_window_counts, uploads_for_customer, uploads_for_drone,
+    uploads_for_drone_model, uploads_for_location, ytd_start,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -57,12 +58,18 @@ def dashboard():
     factory_lat = current_app.config.get("FACTORY_LAT")
     factory_lon = current_app.config.get("FACTORY_LON")
     factory_radius_km = current_app.config.get("FACTORY_RADIUS_KM")
-    # Shared across every location lookup this request makes (the scoping
-    # below, plus the location_breakdown() chart further down) so the
-    # total number of brand-new (not-yet-cached) reverse-geocoding calls
-    # stays bounded for the whole page load, not per call site -- see
-    # stats.DEFAULT_GEO_LOOKUP_BUDGET / app/geo.py.
-    geo_budget = [8]
+    # A normal page load NEVER makes a live geocoding call -- budget 0
+    # means every location lookup this request makes (the scoping below,
+    # plus the location_breakdown() chart further down) is cache-only,
+    # falling back to "Unclassified" for anything not yet resolved. A live
+    # Nominatim call is rate-limited to ~1/second with its own timeout on
+    # top (see app/geo.py), so even a handful of uncached points on a
+    # dashboard load would have made the whole page wait several seconds
+    # to tens of seconds -- exactly the "takes 10 sec to open" regression
+    # this fixed. New locations are only ever resolved by the explicit
+    # "Resolve Pending Locations" admin action below (resolve_locations()),
+    # which the admin runs on demand and which is allowed to take a while.
+    geo_budget = [0]
 
     # Everything below the top totals row (the "interactive analytics"
     # panel: trend charts, donuts, top drones, anomalies, averages) is
@@ -179,6 +186,64 @@ def drive_sync_test():
     AuditLog.record(current_user, "drive_sync_test", f"ok={ok}: {message}")
     db.session.commit()
     flash(message, "success" if ok else "error")
+    return redirect(url_for("admin.dashboard"))
+
+
+@admin_bp.route("/resolve-locations", methods=["POST"])
+def resolve_locations():
+    """Explicitly geocodes a batch of not-yet-classified flight locations
+    (see models.GeoCache / app/geo.py) -- the only place a live,
+    rate-limited Nominatim call ever happens; a normal Organization
+    Overview page load is cache-only (geo_budget=[0] in dashboard()
+    above) specifically so it never blocks on this. Safe to click
+    repeatedly: each run picks up wherever the cache currently stands and
+    only spends its budget on genuinely new points."""
+    factory_lat = current_app.config.get("FACTORY_LAT")
+    factory_lon = current_app.config.get("FACTORY_LON")
+    factory_radius_km = current_app.config.get("FACTORY_RADIUS_KM")
+    if factory_lat is None or factory_lon is None:
+        flash("Set FACTORY_LAT/FACTORY_LON in .env first -- location resolving needs them.", "error")
+        return redirect(url_for("admin.dashboard"))
+
+    from app.geo import is_cached
+
+    uploads = [u for u in Upload.query.all() if u.status == "completed" and u.analysis]
+    budget = [30]
+    resolved = 0
+    for u in uploads:
+        if budget[0] <= 0:
+            break
+        before = budget[0]
+        location_for_upload(u, factory_lat, factory_lon, factory_radius_km, budget)
+        if budget[0] < before:
+            resolved += 1
+
+    # A point that's already cached is done -- resolved (even if the
+    # lookup itself came back empty and it ends up "Unclassified" for
+    # good) or factory/no-GPS and never needed geocoding in the first
+    # place. Only count ones that still have no GeoCache row at all as
+    # genuinely waiting for a turn, so this number actually hits zero
+    # once a few runs have cleared the backlog, instead of permanently
+    # re-counting every point Nominatim simply couldn't resolve.
+    still_pending = 0
+    for u in uploads:
+        report = u.analysis.get_report()
+        summary = (report or {}).get("summary") or {}
+        lat, lon = summary.get("home_lat"), summary.get("home_lon")
+        if lat is None or lon is None:
+            continue
+        if haversine_km(lat, lon, factory_lat, factory_lon) <= factory_radius_km:
+            continue
+        if not is_cached(lat, lon):
+            still_pending += 1
+
+    AuditLog.record(current_user, "resolve_locations", f"{resolved} resolved this run, {still_pending} still pending")
+    db.session.commit()
+    flash(
+        f"Resolved {resolved} location(s)."
+        + (f" {still_pending} more still pending -- click again to continue." if still_pending else " All caught up."),
+        "success",
+    )
     return redirect(url_for("admin.dashboard"))
 
 
