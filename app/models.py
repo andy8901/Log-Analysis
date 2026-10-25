@@ -201,13 +201,27 @@ class AnalysisResult(db.Model):
     upload = db.relationship("Upload", back_populates="analysis")
 
     def get_report(self):
-        return json.loads(self.report_json)
+        # Cached per-instance: a single admin dashboard request calls this
+        # once per upload from several independent aggregate functions in
+        # app/stats.py (flight summary, investigation rollup, category
+        # breakdown, location, reliability, the RCA queue, ...), and
+        # SQLAlchemy's identity map hands every one of them this same
+        # AnalysisResult object -- without caching, report_json (which can
+        # hold a full GPS track and chart time-series) was being
+        # re-deserialized 8-10+ times per upload on one page load.
+        if not hasattr(self, "_report_cache"):
+            self._report_cache = json.loads(self.report_json)
+        return self._report_cache
 
     def get_top_alerts(self):
         return json.loads(self.top_alerts) if self.top_alerts else []
 
     def get_multilog(self):
-        return json.loads(self.multilog_json) if self.multilog_json else None
+        if self.multilog_json is None:
+            return None
+        if not hasattr(self, "_multilog_cache"):
+            self._multilog_cache = json.loads(self.multilog_json)
+        return self._multilog_cache
 
 
 class AuditLog(db.Model):
