@@ -41,7 +41,8 @@
         <select name="location" id="locationFilterSelect" onchange="this.form.submit()" style="max-width:220px;" {{ 'disabled title="Set FACTORY_LAT/FACTORY_LON in .env to enable"' if not factory_configured }}>
             <option value="">All locations</option>
             <option value="Factory" {{ 'selected' if selected_location == 'Factory' }}>In Factory</option>
-            <option value="Karnataka" {{ 'selected' if selected_location == 'Karnataka' }}>Karnataka (all districts)</option>
+            <option value="Karnataka (Full)" {{ 'selected' if selected_location == 'Karnataka (Full)' }}>Full Karnataka</option>
+            <option value="Karnataka" {{ 'selected' if selected_location == 'Karnataka' }}>Karnataka Excluding In Factory</option>
             <optgroup label="Karnataka districts">
                 {% for dname in karnataka_districts %}
                 {% set loc_value = 'Karnataka: ' + dname %}
@@ -131,31 +132,16 @@
     {% set donut_title = 'Issue Severity' %}
     {% include "_flight_summary.html" %}
 
-    <h2>Flight Investigator Insights</h2>
+    <h2 style="margin-top:28px;">Flight Investigator Insights</h2>
     <p style="color:var(--text-muted);font-size:0.85em;margin-top:-8px;">
         From the per-flight investigator (.bin logs only) &mdash; verdicts, failsafe timing, and issue counts it has
         already computed for the current selection. Flights it hasn't analyzed yet aren't counted here.
+        A finding below is a <strong>detected anomaly</strong> (investigator.py flagged something in the log) unless
+        it's explicitly a crash or a human-recorded conclusion &mdash; a warning in a log is never counted as a
+        confirmed drone failure on its own.
     </p>
-    <div class="summary-grid">
-        <div class="metric-card"><h4>Avg Flight Time</h4><h2>{{ inv_stats.avg_airtime_min if inv_stats.avg_airtime_min is not none else '—' }}<small> min</small></h2></div>
-        <div class="metric-card"><h4>Avg Max Distance</h4><h2>{{ inv_stats.avg_max_distance_m if inv_stats.avg_max_distance_m is not none else '—' }}<small> m</small></h2></div>
-        <div class="metric-card"><h4>Avg Max Altitude</h4><h2>{{ inv_stats.avg_max_altitude_m if inv_stats.avg_max_altitude_m is not none else '—' }}<small> m</small></h2></div>
-        <div class="metric-card"><h4>Avg Flight Time at Battery Failsafe</h4><h2>{{ inv_stats.avg_airtime_at_battery_fs_min if inv_stats.avg_airtime_at_battery_fs_min is not none else '—' }}<small> min</small></h2></div>
-        <div class="metric-card"><h4>Avg Distance at GCS Failsafe</h4><h2>{{ inv_stats.avg_distance_at_gcs_fs_m if inv_stats.avg_distance_at_gcs_fs_m is not none else '—' }}<small> m</small></h2></div>
-        <div class="metric-card"><h4>Avg Distance at RC Failsafe</h4><h2>{{ inv_stats.avg_distance_at_rc_fs_m if inv_stats.avg_distance_at_rc_fs_m is not none else '—' }}<small> m</small></h2></div>
-        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.thrust_issue_flights }}"><h4>Potential Thrust Losses</h4><h2>{{ inv_stats.thrust_issue_flights }}</h2></div>
-        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.motor_issue_flights }}"><h4>Motor Issues</h4><h2>{{ inv_stats.motor_issue_flights }}</h2></div>
-        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.gps_issue_flights }}"><h4>GPS Issues</h4><h2>{{ inv_stats.gps_issue_flights }}</h2></div>
-        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.ekf_issue_flights }}"><h4>EKF Issues</h4><h2>{{ inv_stats.ekf_issue_flights }}</h2></div>
-        <div class="metric-card"><h4>System Errors</h4><h2>{{ inv_stats.system_error_flights }}</h2></div>
-        <div class="metric-card"><h4>Pilot/Human Errors</h4><h2>{{ inv_stats.human_error_flights }}</h2></div>
-        <div class="metric-card"><h4>Logs Yet to Decide</h4><h2>{{ conclusion_counts.undetermined }}</h2></div>
-        <div class="metric-card"><h4>Logs Marked Pilot Error</h4><h2>{{ conclusion_counts.pilot_error }}</h2></div>
-        <div class="metric-card"><h4>Logs Marked System Error</h4><h2>{{ conclusion_counts.system_error }}</h2></div>
-        <div class="metric-card" style="{{ 'background:#7f1d1d;' if inv_stats.crash_count }}"><h4>Crashes Observed</h4><h2>{{ inv_stats.crash_count }}</h2></div>
-    </div>
     {% if inv_stats.scored_flights == 0 %}
-    <p style="color:var(--text-muted);font-size:0.85em;margin-top:-16px;">
+    <p style="color:var(--text-muted);font-size:0.85em;">
         No flights in this view have investigator data yet &mdash; it's computed automatically for new .bin uploads,
         and the first time an older .bin upload's report is viewed.
     </p>
@@ -168,6 +154,122 @@
         {% if today_highlight.crash %}a crash was recorded on <strong>{{ today_highlight.crash.msn }}</strong> ({{ today_highlight.crash.department }}).{% elif today_highlight.critical %}<strong>{{ today_highlight.critical.msn }}</strong> ({{ today_highlight.critical.department }}) came back CRITICAL: {{ today_highlight.critical.message }}{% endif %}
     </p>
     {% endif %}
+
+    <h3>A &middot; Safety &amp; Reliability</h3>
+    <div class="summary-grid">
+        <div class="metric-card" style="{{ 'background:#7f1d1d;' if reliability.crash_count }}"><h4>Crashes Observed</h4><h2>{{ reliability.crash_count }}</h2></div>
+        <div class="metric-card"><h4>Crash Rate</h4><h2>{{ reliability.crash_rate_per_100_flights if reliability.crash_rate_per_100_flights is not none else '—' }}<small> /100 flights</small></h2></div>
+        <div class="metric-card"><h4>Crash Rate</h4><h2>{{ reliability.crash_rate_per_100_hours if reliability.crash_rate_per_100_hours is not none else '—' }}<small> /100 flight hrs</small></h2></div>
+        <div class="metric-card"><h4>Critical-Verdict Rate</h4><h2>{{ reliability.critical_rate_per_100_flights if reliability.critical_rate_per_100_flights is not none else '—' }}<small> /100 flights</small></h2></div>
+        <div class="metric-card"><h4>Reliability Rate</h4><h2>{{ reliability.reliability_rate_pct if reliability.reliability_rate_pct is not none else '—' }}<small> %</small></h2><small>crash-free flights</small></div>
+        <div class="metric-card"><h4>Flagged Flights</h4><h2>{{ reliability.flagged_flights }}</h2><small>WARNING/CRITICAL, needing a decision</small></div>
+        <div class="metric-card"><h4>Issue Closure Rate</h4><h2>{{ reliability.issue_closure_rate_pct if reliability.issue_closure_rate_pct is not none else '—' }}<small> %</small></h2><small>flagged flights with a recorded conclusion</small></div>
+        <div class="metric-card"><h4>Total Flight Hours</h4><h2>{{ reliability.flight_hours }}</h2></div>
+    </div>
+
+    <h3>B &middot; Battery &amp; Failsafe Performance</h3>
+    <div class="summary-grid">
+        <div class="metric-card"><h4>Avg Flight Time</h4><h2>{{ inv_stats.avg_airtime_min if inv_stats.avg_airtime_min is not none else '—' }}<small> min</small></h2></div>
+        <div class="metric-card"><h4>Median Flight Time</h4><h2>{{ inv_stats.median_airtime_min if inv_stats.median_airtime_min is not none else '—' }}<small> min</small></h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.battery_fs_flights }}"><h4>Battery Failsafe Flights</h4><h2>{{ inv_stats.battery_fs_flights }}</h2><small>{{ inv_stats.battery_fs_rate_pct if inv_stats.battery_fs_rate_pct is not none else '—' }}% of scored flights</small></div>
+        <div class="metric-card"><h4>Avg Flight Time at Battery Failsafe</h4><h2>{{ inv_stats.avg_airtime_at_battery_fs_min if inv_stats.avg_airtime_at_battery_fs_min is not none else '—' }}<small> min</small></h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.gcs_fs_flights }}"><h4>GCS Failsafe Flights</h4><h2>{{ inv_stats.gcs_fs_flights }}</h2><small>{{ inv_stats.gcs_fs_rate_pct if inv_stats.gcs_fs_rate_pct is not none else '—' }}% of scored flights</small></div>
+        <div class="metric-card"><h4>Avg Distance at GCS Failsafe</h4><h2>{{ inv_stats.avg_distance_at_gcs_fs_m if inv_stats.avg_distance_at_gcs_fs_m is not none else '—' }}<small> m</small></h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.rc_fs_flights }}"><h4>RC Failsafe Flights</h4><h2>{{ inv_stats.rc_fs_flights }}</h2><small>{{ inv_stats.rc_fs_rate_pct if inv_stats.rc_fs_rate_pct is not none else '—' }}% of scored flights</small></div>
+        <div class="metric-card"><h4>Avg Distance at RC Failsafe</h4><h2>{{ inv_stats.avg_distance_at_rc_fs_m if inv_stats.avg_distance_at_rc_fs_m is not none else '—' }}<small> m</small></h2></div>
+    </div>
+    <p style="color:var(--text-muted);font-size:0.78em;margin-top:-10px;">
+        Battery cell-level detail (per-cell voltage imbalance, temperature, internal resistance, cycle count) isn't
+        in standard ArduPilot dataflash logs, so it isn't shown here rather than estimated.
+    </p>
+
+    <h3>C &middot; Propulsion, Navigation &amp; System Health</h3>
+    <div class="summary-grid">
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.thrust_issue_flights }}"><h4>Potential Thrust Losses</h4><h2>{{ inv_stats.thrust_issue_flights }}</h2><small>{{ inv_stats.thrust_issue_rate_pct if inv_stats.thrust_issue_rate_pct is not none else '—' }}%</small></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.motor_issue_flights }}"><h4>Motor Issues</h4><h2>{{ inv_stats.motor_issue_flights }}</h2></div>
+        <div class="metric-card"><h4>Avg Motor Saturation</h4><h2>{{ inv_stats.avg_motor_saturation_pct if inv_stats.avg_motor_saturation_pct is not none else '—' }}<small> %</small></h2></div>
+        <div class="metric-card"><h4>Peak Motor Saturation</h4><h2>{{ inv_stats.max_motor_saturation_pct if inv_stats.max_motor_saturation_pct is not none else '—' }}<small> %</small></h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.altitude_loss_events }}"><h4>Altitude-Loss Events</h4><h2>{{ inv_stats.altitude_loss_events }}</h2></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.gps_issue_flights }}"><h4>GPS Issues</h4><h2>{{ inv_stats.gps_issue_flights }}</h2><small>{{ inv_stats.gps_issue_rate_pct if inv_stats.gps_issue_rate_pct is not none else '—' }}%</small></div>
+        <div class="metric-card" style="{{ 'background:#92400e;' if inv_stats.ekf_issue_flights }}"><h4>EKF/Navigation Issues</h4><h2>{{ inv_stats.ekf_issue_flights }}</h2><small>{{ inv_stats.ekf_issue_rate_pct if inv_stats.ekf_issue_rate_pct is not none else '—' }}%</small></div>
+        <div class="metric-card"><h4>Avg Max Altitude</h4><h2>{{ inv_stats.avg_max_altitude_m if inv_stats.avg_max_altitude_m is not none else '—' }}<small> m</small></h2></div>
+        <div class="metric-card"><h4>Avg Max Distance</h4><h2>{{ inv_stats.avg_max_distance_m if inv_stats.avg_max_distance_m is not none else '—' }}<small> m</small></h2></div>
+    </div>
+    {% if inv_stats.firmware_counts %}
+    <p style="color:var(--text-muted);font-size:0.85em;">
+        Firmware versions in this view:
+        {% for fw, n in inv_stats.firmware_counts.items() %}<strong>{{ fw }}</strong> ({{ n }}){{ ", " if not loop.last }}{% endfor %}
+    </p>
+    {% endif %}
+    <p style="color:var(--text-muted);font-size:0.78em;margin-top:-10px;">
+        ESC temperature/error telemetry and precise failsafe trigger-to-response timing aren't exposed as distinct
+        signals by the investigator, so they're left out here rather than guessed.
+    </p>
+
+    <h3>D &middot; Customer vs Internal Testing</h3>
+    {% if not factory_configured %}
+    <p style="color:var(--text-muted);font-size:0.85em;">Set FACTORY_LAT/FACTORY_LON in .env to enable this comparison.</p>
+    {% else %}
+    <table>
+        <thead><tr><th></th><th>Flights</th><th>Flight Hours</th><th>Crash Rate /100 Flights</th><th>Critical Rate /100 Flights</th><th>Reliability Rate %</th></tr></thead>
+        <tbody>
+            <tr>
+                <td><strong>Factory (Internal Testing)</strong></td>
+                <td>{{ factory_vs_field.factory.scored_flights }}</td>
+                <td>{{ factory_vs_field.factory.flight_hours }}</td>
+                <td>{{ factory_vs_field.factory.crash_rate_per_100_flights if factory_vs_field.factory.crash_rate_per_100_flights is not none else '—' }}</td>
+                <td>{{ factory_vs_field.factory.critical_rate_per_100_flights if factory_vs_field.factory.critical_rate_per_100_flights is not none else '—' }}</td>
+                <td>{{ factory_vs_field.factory.reliability_rate_pct if factory_vs_field.factory.reliability_rate_pct is not none else '—' }}</td>
+            </tr>
+            <tr>
+                <td><strong>Field (Customer Sites)</strong></td>
+                <td>{{ factory_vs_field.field.scored_flights }}</td>
+                <td>{{ factory_vs_field.field.flight_hours }}</td>
+                <td>{{ factory_vs_field.field.crash_rate_per_100_flights if factory_vs_field.field.crash_rate_per_100_flights is not none else '—' }}</td>
+                <td>{{ factory_vs_field.field.critical_rate_per_100_flights if factory_vs_field.field.critical_rate_per_100_flights is not none else '—' }}</td>
+                <td>{{ factory_vs_field.field.reliability_rate_pct if factory_vs_field.field.reliability_rate_pct is not none else '—' }}</td>
+            </tr>
+        </tbody>
+    </table>
+    <p style="color:var(--text-muted);font-size:0.78em;">
+        "Factory" uses the configured radius around FACTORY_LAT/FACTORY_LON; new/not-yet-geocoded flight locations
+        outside that radius are not counted as Field until resolved (see "Resolve Pending Locations" above).
+    </p>
+    {% endif %}
+
+    <h3>E &middot; Investigation Queue &mdash; Pending RCA</h3>
+    <p style="color:var(--text-muted);font-size:0.85em;margin-top:-8px;">
+        WARNING/CRITICAL flights in this view with no recorded conclusion yet, most recent first.
+    </p>
+    {% if rca_queue %}
+    <table>
+        <thead><tr><th>MSN</th><th>Department</th><th>Customer</th><th>Status</th><th>Verdict</th><th>Uploaded</th><th></th></tr></thead>
+        <tbody>
+        {% for row in rca_queue %}
+            <tr>
+                <td>{{ row.msn }}</td>
+                <td>{{ row.department }}</td>
+                <td>{{ row.customer_name or '—' }}</td>
+                <td><span class="badge badge-{{ row.report_status }}">{{ row.report_status }}</span></td>
+                <td>{{ row.verdict_label or (row.kind if row.kind else '—') }}</td>
+                <td>{{ row.uploaded_at.strftime('%Y-%m-%d') if row.uploaded_at else '—' }}</td>
+                <td><a class="btn secondary" style="padding:5px 12px;font-size:0.85em;" href="{{ url_for('dept.view_report', upload_id=row.upload_id) }}">View</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--text-muted);font-size:0.9em;">Nothing pending &mdash; every flagged flight in this view already has a recorded conclusion.</p>
+    {% endif %}
+
+    <h3>Logs by Decision Status</h3>
+    <div class="summary-grid">
+        <div class="metric-card"><h4>Logs Yet to Decide</h4><h2>{{ conclusion_counts.undetermined }}</h2></div>
+        <div class="metric-card"><h4>Logs Marked Pilot Error</h4><h2>{{ conclusion_counts.pilot_error }}</h2></div>
+        <div class="metric-card"><h4>Logs Marked System Error</h4><h2>{{ conclusion_counts.system_error }}</h2></div>
+        <div class="metric-card"><h4>System Errors (Verdict)</h4><h2>{{ inv_stats.system_error_flights }}</h2></div>
+        <div class="metric-card"><h4>Pilot/Human Errors (Verdict)</h4><h2>{{ inv_stats.human_error_flights }}</h2></div>
+    </div>
 
     <div class="viz-root">
         <div class="analytics-grid viz-row-3">

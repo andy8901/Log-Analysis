@@ -16,11 +16,12 @@ from app.models import AnalysisResult, AuditLog, Department, Drone, Upload, User
 from app.routes_dept import DRONE_MODEL_CHOICES, known_customers, process_and_save_log
 from app.stats import (
     active_drone_trend, conclusion_breakdown, customer_breakdown, drone_aggregate,
-    flight_summary_aggregate, daily_flight_trend, haversine_km, investigation_aggregate,
-    investigation_category_breakdown, issue_severity_breakdown, location_breakdown,
+    factory_vs_field_comparison, flight_summary_aggregate, daily_flight_trend,
+    haversine_km, investigation_aggregate, investigation_category_breakdown,
+    investigation_queue, issue_severity_breakdown, location_breakdown,
     location_for_upload, multilog_aggregate, person_aggregate, recent_anomalies,
-    today_start, todays_highlight, top_drones_from_uploads, trend_pct,
-    period_window_counts, uploads_for_customer, uploads_for_drone,
+    reliability_summary, today_start, todays_highlight, top_drones_from_uploads,
+    trend_pct, period_window_counts, uploads_for_customer, uploads_for_drone,
     uploads_for_drone_model, uploads_for_location, ytd_start,
 )
 
@@ -147,6 +148,11 @@ def dashboard():
     issue_breakdown = investigation_category_breakdown(scoped_completed_uploads)
     conclusion_counts = conclusion_breakdown(scoped_completed_uploads)
     today_highlight = todays_highlight(all_completed_uploads)
+    reliability = reliability_summary(scoped_completed_uploads)
+    factory_vs_field = factory_vs_field_comparison(
+        scoped_completed_uploads, factory_lat, factory_lon, factory_radius_km, geo_budget
+    )
+    rca_queue = investigation_queue(scoped_completed_uploads, limit=15)
 
     any_filter_active = bool(
         selected_drone_id or selected_drone_model or selected_department_id
@@ -167,6 +173,7 @@ def dashboard():
         severity=severity, anomalies=anomalies, top_drones=top_drones,
         ml_stats=ml_stats, inv_stats=inv_stats, issue_breakdown=issue_breakdown,
         conclusion_counts=conclusion_counts, today_highlight=today_highlight,
+        reliability=reliability, factory_vs_field=factory_vs_field, rca_queue=rca_queue,
         dept_chart=dept_chart, drive_sync=drive_sync_diagnostics(),
         all_drones=all_drones_list, selected_drone=selected_drone,
         all_drone_models=DRONE_MODEL_CHOICES, selected_drone_model=selected_drone_model,

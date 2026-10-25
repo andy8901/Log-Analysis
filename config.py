@@ -84,4 +84,4 @@ class Config:
     # breakdown entirely rather than guessing a default location.
     FACTORY_LAT = float(os.environ["FACTORY_LAT"]) if os.environ.get("FACTORY_LAT") else None
     FACTORY_LON = float(os.environ["FACTORY_LON"]) if os.environ.get("FACTORY_LON") else None
-    FACTORY_RADIUS_KM = float(os.environ.get("FACTORY_RADIUS_KM", "5"))
+    FACTORY_RADIUS_KM = float(os.environ.get("FACTORY_RADIUS_KM", "10"))

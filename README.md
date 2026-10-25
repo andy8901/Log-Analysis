@@ -242,7 +242,7 @@ over it regardless.
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | Only read once, to bootstrap the first admin account when the DB is empty |
 | `DRIVE_SYNC_ROOT` | unset (Drive sync disabled) | See below |
 | `FACTORY_LAT` / `FACTORY_LON` | unset (location breakdown disabled) | Coordinates of the factory/in-house testing site, for the Organization Overview's location breakdown — a flight's takeoff point within `FACTORY_RADIUS_KM` of this point counts as "Factory"; everything else is classified by Karnataka district or Indian state (see below) |
-| `FACTORY_RADIUS_KM` | `5` | Radius around `FACTORY_LAT`/`FACTORY_LON` counted as "Factory" |
+| `FACTORY_RADIUS_KM` | `10` | Radius around `FACTORY_LAT`/`FACTORY_LON` counted as "Factory" |
 
 A flight outside the factory radius is classified by reverse-geocoding its takeoff point against [OpenStreetMap's Nominatim](https://nominatim.org/) (free, no API key, rate-limited to about 1 request/second) — the server needs outbound internet access to `nominatim.openstreetmap.org` for this to work. Results are cached permanently in the database (`app/geo.py`), so only genuinely new locations trigger a live lookup; the first few Organization Overview loads after new sites start flying may be a little slower while that cache warms up, after which it's instant.
 
